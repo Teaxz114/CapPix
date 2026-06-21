@@ -1,5 +1,6 @@
 pub mod screen;
 pub mod window;
+pub mod window_detect;
 
 use serde::Serialize;
 

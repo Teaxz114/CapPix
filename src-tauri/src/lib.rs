@@ -1,6 +1,7 @@
 mod capture;
 mod commands;
 mod hotkey;
+mod pin;
 mod tray;
 
 use tauri::{Emitter, Listener, Manager};
@@ -71,12 +72,16 @@ pub fn run() {
             commands::capture::capture_fullscreen,
             commands::capture::capture_region,
             commands::capture::get_windows,
+            commands::capture::get_window_at_point,
             commands::hotkey::get_hotkeys,
             commands::clipboard::crop_image,
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::open_screenshot_overlay,
             commands::clipboard::open_annotate_window,
             commands::save::save_image_to_file,
+            pin::create_pin_window,
+            pin::close_pin_window,
+            pin::resize_pin_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CapPix");

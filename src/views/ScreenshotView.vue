@@ -37,6 +37,23 @@
       />
     </svg>
 
+    <!-- Window highlight (shown on hover when not selecting) -->
+    <div
+      v-if="windowHighlight && !isSelecting && !hasSelection"
+      class="window-highlight"
+      :style="{
+        left: windowHighlight.x + 'px',
+        top: windowHighlight.y + 'px',
+        width: windowHighlight.width + 'px',
+        height: windowHighlight.height + 'px',
+      }"
+    >
+      <div class="window-highlight-border"></div>
+      <div class="window-highlight-label" v-if="windowHighlight.title">
+        {{ windowHighlight.title }}
+      </div>
+    </div>
+
     <!-- Selection border -->
     <div
       v-if="isSelecting || hasSelection"
@@ -83,7 +100,7 @@
 
     <!-- Hint text -->
     <div v-if="!isSelecting && !hasSelection" class="hint-text">
-      拖拽选择区域 · 双击全屏截图 · ESC 取消
+      拖拽选择区域 · 点击窗口智能识别 · 双击全屏截图 · ESC 取消
     </div>
   </div>
 </template>
@@ -116,6 +133,27 @@ const showMagnifier = ref(true);
 const cursorX = ref(0);
 const cursorY = ref(0);
 const pixelColor = ref("");
+
+// Window detection state
+interface WindowRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  title: string;
+  hwnd: number;
+}
+
+const windowHighlight = ref<WindowRegion | null>(null);
+let windowDetectTimer: ReturnType<typeof setTimeout> | null = null;
+const WINDOW_DETECT_DEBOUNCE = 100; // ms
+
+// Virtual screen offset (for multi-monitor support)
+// The overlay is positioned at (0,0) of the virtual screen,
+// but the browser window starts at the primary monitor's origin.
+// We need to add the virtual screen offset to convert overlay coords to screen coords.
+let virtualScreenOffsetX = 0;
+let virtualScreenOffsetY = 0;
 
 // Computed selection bounds
 const selectionX = computed(() => Math.min(startX.value, endX.value));
@@ -159,6 +197,61 @@ watch(screenshotData, (data) => {
   }
 });
 
+// Fetch virtual screen offset for coordinate conversion
+async function fetchVirtualScreenOffset() {
+  try {
+    const screens = await invoke<Array<{ id: number; x: number; y: number; width: number; height: number; is_primary: boolean }>>("get_screens");
+    // The virtual screen offset is the minimum x/y across all monitors
+    // The overlay window is positioned at the primary monitor, so we need
+    // to add the virtual screen origin offset to convert overlay-local coords
+    // to virtual screen (absolute) coords.
+    if (screens.length > 0) {
+      virtualScreenOffsetX = Math.min(...screens.map(s => s.x));
+      virtualScreenOffsetY = Math.min(...screens.map(s => s.y));
+    }
+  } catch (e) {
+    console.error("Failed to get screen info for offset:", e);
+  }
+}
+
+// Debounced window detection
+function detectWindowAtCursor(clientX: number, clientY: number) {
+  if (windowDetectTimer) {
+    clearTimeout(windowDetectTimer);
+  }
+  windowDetectTimer = setTimeout(async () => {
+    try {
+      // Convert overlay-local coordinates to screen coordinates
+      // The overlay covers the virtual screen starting from (0,0) in browser space,
+      // but screen coordinates start from the virtual screen origin.
+      const screenX = clientX + virtualScreenOffsetX;
+      const screenY = clientY + virtualScreenOffsetY;
+
+      const result = await invoke<WindowRegion | null>("get_window_at_point", {
+        x: screenX,
+        y: screenY,
+      });
+
+      if (result) {
+        // Convert screen coordinates back to overlay-local coordinates
+        windowHighlight.value = {
+          x: result.x - virtualScreenOffsetX,
+          y: result.y - virtualScreenOffsetY,
+          width: result.width,
+          height: result.height,
+          title: result.title,
+          hwnd: result.hwnd,
+        };
+      } else {
+        windowHighlight.value = null;
+      }
+    } catch (e) {
+      console.error("Window detection failed:", e);
+      windowHighlight.value = null;
+    }
+  }, WINDOW_DETECT_DEBOUNCE);
+}
+
 // Tauri event listener
 let unlisten: (() => void) | null = null;
 
@@ -171,12 +264,16 @@ onMounted(async () => {
     console.error("Failed to listen for screenshot-ready:", e);
   }
 
+  // Fetch virtual screen offset for coordinate conversion
+  await fetchVirtualScreenOffset();
+
   // ESC key handler
   document.addEventListener("keydown", onKeyDown);
 });
 
 onUnmounted(() => {
   if (unlisten) unlisten();
+  if (windowDetectTimer) clearTimeout(windowDetectTimer);
   document.removeEventListener("keydown", onKeyDown);
 });
 
@@ -188,6 +285,10 @@ function onKeyDown(e: KeyboardEvent) {
 
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return;
+
+  // If clicking on a window highlight (no drag), capture that window directly
+  // We'll detect this on mouseUp if the mouse didn't move significantly
+
   isSelecting.value = true;
   hasSelection.value = false;
   startX.value = e.clientX;
@@ -195,6 +296,13 @@ function onMouseDown(e: MouseEvent) {
   endX.value = e.clientX;
   endY.value = e.clientY;
   showMagnifier.value = false;
+
+  // Clear window highlight while selecting
+  windowHighlight.value = null;
+  if (windowDetectTimer) {
+    clearTimeout(windowDetectTimer);
+    windowDetectTimer = null;
+  }
 }
 
 function onMouseMove(e: MouseEvent) {
@@ -208,6 +316,9 @@ function onMouseMove(e: MouseEvent) {
     // Update magnifier
     showMagnifier.value = true;
     updateMagnifier(e.clientX, e.clientY);
+
+    // Debounced window detection
+    detectWindowAtCursor(e.clientX, e.clientY);
   }
 }
 
@@ -220,15 +331,34 @@ function onMouseUp(e: MouseEvent) {
   const w = selectionW.value;
   const h = selectionH.value;
 
+  // If the selection is very small (click without drag), check for window capture
   if (w < 5 || h < 5) {
     hasSelection.value = false;
+
+    // If we had a window highlight, capture that window region
+    if (windowHighlight.value) {
+      const win = windowHighlight.value;
+      // Use screen coordinates for capture
+      captureRegion(
+        win.x + virtualScreenOffsetX,
+        win.y + virtualScreenOffsetY,
+        win.width,
+        win.height
+      );
+      windowHighlight.value = null;
+    }
     return;
   }
 
   hasSelection.value = true;
 
-  // Capture the selected region
-  captureRegion(selectionX.value, selectionY.value, w, h);
+  // Capture the selected region (add virtual screen offset for screen coordinates)
+  captureRegion(
+    selectionX.value + virtualScreenOffsetX,
+    selectionY.value + virtualScreenOffsetY,
+    w,
+    h
+  );
 }
 
 async function onDoubleClick() {
@@ -348,6 +478,38 @@ function updateMagnifier(x: number, y: number) {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+/* Window highlight - blue border like PixPin */
+.window-highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.window-highlight-border {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(59, 130, 246, 0.85);
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3), inset 0 0 0 1px rgba(59, 130, 246, 0.1);
+}
+
+.window-highlight-label {
+  position: absolute;
+  top: -24px;
+  left: 0;
+  background: rgba(59, 130, 246, 0.9);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 3px 3px 0 0;
+  font-size: 11px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .selection-border {

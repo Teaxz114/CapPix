@@ -122,6 +122,16 @@ function onToolChange(tool: string) {
     fabricCanvas.freeDrawingBrush = new PencilBrush(fabricCanvas);
     fabricCanvas.freeDrawingBrush.color = currentColor.value;
     fabricCanvas.freeDrawingBrush.width = currentStrokeWidth.value;
+  } else if (tool === "highlighter") {
+    fabricCanvas.isDrawingMode = true;
+    fabricCanvas.freeDrawingBrush = new PencilBrush(fabricCanvas);
+    // Highlighter: semi-transparent, wider stroke
+    const color = currentColor.value;
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    fabricCanvas.freeDrawingBrush.color = `rgba(${r},${g},${b},0.35)`;
+    fabricCanvas.freeDrawingBrush.width = Math.max(currentStrokeWidth.value * 4, 16);
   } else if (tool === "eraser") {
     fabricCanvas.selection = true;
     fabricCanvas.defaultCursor = "pointer";
@@ -168,6 +178,40 @@ function onMouseDown(opt: any) {
     fabricCanvas.add(text);
     fabricCanvas.setActiveObject(text);
     text.enterEditing();
+    saveHistory();
+    isDrawing = false;
+    return;
+  }
+
+  if (currentTool.value === "number") {
+    // Auto-increment number annotation
+    const existingNumbers = fabricCanvas.getObjects().filter((obj: any) => obj._cappixNumber);
+    const nextNum = existingNumbers.length + 1;
+    const circle = new Ellipse({
+      left: pointer.x - 16,
+      top: pointer.y - 16,
+      rx: 16,
+      ry: 16,
+      fill: currentColor.value,
+      stroke: "transparent",
+      selectable: true,
+    });
+    (circle as any)._cappixNumber = nextNum;
+    fabricCanvas.add(circle);
+    const numText = new ITEXT(String(nextNum), {
+      left: pointer.x - 5,
+      top: pointer.y - 10,
+      fontSize: 16,
+      fill: "#ffffff",
+      fontFamily: "Arial, sans-serif",
+      fontWeight: "bold",
+      textAlign: "center",
+      selectable: false,
+      evented: false,
+    });
+    (numText as any)._cappixNumberLabel = true;
+    fabricCanvas.add(numText);
+    fabricCanvas.renderAll();
     saveHistory();
     isDrawing = false;
     return;
@@ -273,12 +317,94 @@ function onMouseUp() {
 }
 
 function applyMosaic(rect: Rect) {
-  // Simple mosaic: just keep the gray overlay for now
-  // Full pixel-level mosaic would require reading background pixels
-  rect.set({
-    fill: "rgba(40, 40, 40, 0.9)",
-    stroke: "transparent",
-  });
+  if (!fabricCanvas) return;
+  const blockSize = 10;
+  const left = rect.left || 0;
+  const top = rect.top || 0;
+  const width = rect.width || 0;
+  const height = rect.height || 0;
+
+  if (width < 2 || height < 2) {
+    fabricCanvas.remove(rect);
+    return;
+  }
+
+  // Remove the placeholder rect
+  fabricCanvas.remove(rect);
+
+  // Read background pixels via temporary canvas
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = fabricCanvas.getWidth();
+  tempCanvas.height = fabricCanvas.getHeight();
+  const tempCtx = tempCanvas.getContext("2d");
+  if (!tempCtx) return;
+
+  // Draw current canvas background to temp canvas
+  const bgImg = fabricCanvas.backgroundImage;
+  if (bgImg) {
+    const bgCanvas = (bgImg as any).getElement?.() as HTMLImageElement;
+    if (bgCanvas) {
+      tempCtx.drawImage(bgCanvas, 0, 0);
+    }
+  }
+
+  // Read pixel data from the mosaic region
+  try {
+    const imgData = tempCtx.getImageData(left, top, width, height);
+    const pixels = imgData.data;
+
+    // Pixelate: for each block, average the colors
+    for (let by = 0; by < height; by += blockSize) {
+      for (let bx = 0; bx < width; bx += blockSize) {
+        let r = 0, g = 0, b = 0, count = 0;
+        const bw = Math.min(blockSize, width - bx);
+        const bh = Math.min(blockSize, height - by);
+
+        for (let y = by; y < by + bh; y++) {
+          for (let x = bx; x < bx + bw; x++) {
+            const idx = (y * width + x) * 4;
+            r += pixels[idx];
+            g += pixels[idx + 1];
+            b += pixels[idx + 2];
+            count++;
+          }
+        }
+
+        r = Math.round(r / count);
+        g = Math.round(g / count);
+        b = Math.round(b / count);
+
+        // Fill block with averaged color
+        const mosaicRect = new Rect({
+          left: left + bx,
+          top: top + by,
+          width: bw,
+          height: bh,
+          fill: `rgb(${r},${g},${b})`,
+          stroke: "transparent",
+          selectable: false,
+          evented: false,
+        });
+        (mosaicRect as any)._cappixMosaic = true;
+        fabricCanvas.add(mosaicRect);
+      }
+    }
+  } catch (e) {
+    // Cross-origin or other error: fall back to solid gray
+    const fallbackRect = new Rect({
+      left,
+      top,
+      width,
+      height,
+      fill: "rgba(128,128,128,0.9)",
+      stroke: "transparent",
+      selectable: true,
+    });
+    (fallbackRect as any)._cappixMosaic = true;
+    fabricCanvas.add(fallbackRect);
+  }
+
+  fabricCanvas.renderAll();
 }
 
 function onKeyDown(e: KeyboardEvent) {
@@ -288,6 +414,12 @@ function onKeyDown(e: KeyboardEvent) {
   } else if (e.ctrlKey && e.key === "y") {
     e.preventDefault();
     redo();
+  } else if (e.ctrlKey && e.key === "s") {
+    e.preventDefault();
+    saveToFile();
+  } else if (e.ctrlKey && e.key === "c") {
+    e.preventDefault();
+    copyToClipboard();
   } else if (e.key === "Escape") {
     getCurrentWindow().close();
   } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -367,8 +499,15 @@ async function copyToClipboard() {
 
 async function pinToDesktop() {
   if (!fabricCanvas) return;
-  setStatus("贴图功能开发中...");
-  // Future: create a pin window with the annotated image
+  setStatus("正在贴图...");
+  try {
+    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    await invoke("create_pin_window", { imageBase64: base64 });
+    setStatus("已贴图到桌面");
+  } catch (e) {
+    setStatus("贴图失败: " + e);
+  }
 }
 
 function setStatus(msg: string) {

@@ -10,6 +10,11 @@ const router = createRouter({
       name: "annotate",
       component: () => import("../views/AnnotateView.vue"),
     },
+    {
+      path: "/pin",
+      name: "pin",
+      component: () => import("../views/PinView.vue"),
+    },
   ],
 });
 
