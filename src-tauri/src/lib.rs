@@ -9,6 +9,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             tray::setup_tray(app)?;
             hotkey::register_hotkeys(app.handle())?;
@@ -47,6 +48,7 @@ pub fn run() {
             commands::clipboard::crop_image,
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::open_screenshot_overlay,
+            commands::save::save_image_to_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CapPix");
