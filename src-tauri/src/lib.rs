@@ -4,6 +4,7 @@ mod history;
 mod hotkey;
 mod ocr;
 mod pin;
+mod recording;
 mod tray;
 
 use tauri::{Emitter, Listener, Manager};
@@ -91,6 +92,10 @@ pub fn run() {
             pin::create_pin_window,
             pin::close_pin_window,
             pin::resize_pin_window,
+            recording::start_recording,
+            recording::stop_recording,
+            recording::get_recording_state,
+            recording::record_to_gif,
             history::save_to_history,
             history::get_history,
             history::delete_history_item,

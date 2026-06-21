@@ -1,180 +1,80 @@
 <template>
-  <div class="min-h-screen bg-gray-900 text-gray-100 p-6">
-    <header class="mb-6 flex items-center gap-4">
-      <button
-        class="bg-gray-700 hover:bg-gray-600 text-gray-200 px-3 py-2 rounded-lg text-sm transition-colors"
-        @click="$router.push('/')"
-      >
-        ← 返回
-      </button>
-      <h1 class="text-2xl font-bold text-white">历史记录</h1>
-      <div class="flex-1"></div>
-      <button
-        v-if="records.length > 0"
-        class="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-sm transition-colors"
-        @click="handleClearAll"
-      >
-        清空全部
-      </button>
-    </header>
-
-    <!-- Search bar -->
-    <div class="mb-6">
-      <div class="relative">
+  <div class="history-view">
+    <div class="history-header">
+      <h2>截图历史</h2>
+      <div class="history-actions">
         <input
-          v-model="searchText"
-          type="text"
-          placeholder="搜索 OCR 文本..."
-          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500 placeholder-gray-500"
-          @input="onSearchInput"
+          v-model="searchQuery"
+          class="search-input"
+          placeholder="搜索..."
+          @input="onSearch"
         />
-        <svg
-          v-if="!searchText"
-          class="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <button
-          v-else
-          class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-          @click="searchText = ''; loadHistory()"
-        >
-          ✕
-        </button>
+        <button class="btn-danger" @click="clearAll">清空全部</button>
       </div>
     </div>
-
-    <!-- Loading -->
-    <div v-if="loading" class="text-center text-gray-500 py-12">加载中...</div>
-
-    <!-- Empty state -->
-    <div v-else-if="records.length === 0" class="text-center text-gray-500 py-12">
-      <div class="text-4xl mb-4">📷</div>
-      <p>{{ searchText ? '没有找到匹配的记录' : '还没有截图记录' }}</p>
+    <div v-if="loading" class="loading">加载中...</div>
+    <div v-else-if="items.length === 0" class="empty">
+      <p>暂无截图历史</p>
+      <p class="hint">按 Ctrl+Shift+A 截图后会自动保存</p>
     </div>
-
-    <!-- Grid of thumbnails -->
-    <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+    <div v-else class="history-grid">
       <div
-        v-for="record in records"
-        :key="record.id"
-        class="bg-gray-800 rounded-lg overflow-hidden hover:bg-gray-750 transition-colors cursor-pointer group"
-        @click="selectRecord(record)"
+        v-for="item in filteredItems"
+        :key="item.id"
+        class="history-card"
+        @click="openItem(item)"
       >
-        <div class="aspect-video bg-gray-950 flex items-center justify-center overflow-hidden">
-          <img
-            :src="'data:image/jpeg;base64,' + record.thumbnail_base64"
-            :alt="'Screenshot ' + record.id"
-            class="max-w-full max-h-full object-contain"
-          />
+        <img
+          v-if="item.thumbnail"
+          :src="`data:image/png;base64,${item.thumbnail}`"
+          class="card-thumb"
+        />
+        <div class="card-info">
+          <span class="card-date">{{ formatDate(item.created_at) }}</span>
+          <span v-if="item.ocr_text" class="card-ocr-badge">OCR</span>
         </div>
-        <div class="p-2">
-          <div class="text-xs text-gray-400 truncate">{{ record.timestamp }}</div>
-          <div class="text-xs text-gray-500 truncate">{{ record.width }}×{{ record.height }}</div>
-          <div v-if="record.ocr_text" class="text-xs text-gray-600 truncate mt-1">{{ record.ocr_text }}</div>
-        </div>
-        <div class="px-2 pb-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            class="text-red-400 hover:text-red-300 text-xs"
-            @click.stop="handleDelete(record.id)"
-          >
-            删除
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Load more -->
-    <div v-if="records.length > 0 && hasMore" class="text-center mt-6">
-      <button
-        class="bg-gray-700 hover:bg-gray-600 text-gray-200 px-4 py-2 rounded-lg text-sm transition-colors"
-        @click="loadMore"
-      >
-        加载更多
-      </button>
-    </div>
-
-    <!-- Preview overlay -->
-    <div
-      v-if="previewRecord"
-      class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-8"
-      @click.self="previewRecord = null"
-    >
-      <div class="max-w-5xl max-h-full overflow-auto bg-gray-900 rounded-lg shadow-2xl">
-        <div class="flex items-center justify-between p-3 border-b border-gray-700">
-          <div>
-            <span class="text-sm text-gray-400">{{ previewRecord.timestamp }}</span>
-            <span class="text-xs text-gray-500 ml-2">{{ previewRecord.width }}×{{ previewRecord.height }}</span>
-          </div>
-          <div class="flex gap-2">
-            <button
-              class="text-gray-400 hover:text-gray-200 text-sm px-2 py-1"
-              @click="previewRecord = null"
-            >
-              关闭
-            </button>
-          </div>
-        </div>
-        <div class="p-4 flex items-center justify-center">
-          <img
-            :src="'data:image/png;base64,' + previewRecord.image_base64"
-            :alt="'Screenshot ' + previewRecord.id"
-            class="max-w-full max-h-[75vh] object-contain"
-          />
-        </div>
-        <div v-if="previewRecord.ocr_text" class="p-3 border-t border-gray-700">
-          <div class="text-xs text-gray-500 mb-1">OCR 文本:</div>
-          <div class="text-sm text-gray-300 whitespace-pre-wrap max-h-32 overflow-y-auto">{{ previewRecord.ocr_text }}</div>
-        </div>
+        <button class="card-delete" @click.stop="deleteItem(item.id)">×</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
-interface ScreenshotRecord {
+interface HistoryItem {
   id: number;
-  timestamp: string;
   image_base64: string;
-  thumbnail_base64: string;
+  thumbnail: string;
+  created_at: string;
   width: number;
   height: number;
   ocr_text: string | null;
 }
 
-const records = ref<ScreenshotRecord[]>([]);
-const loading = ref(false);
-const searchText = ref("");
-const previewRecord = ref<ScreenshotRecord | null>(null);
-const currentOffset = ref(0);
-const hasMore = ref(true);
-const PAGE_SIZE = 50;
+const items = ref<HistoryItem[]>([]);
+const loading = ref(true);
+const searchQuery = ref("");
 
-let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+const filteredItems = computed(() => {
+  if (!searchQuery.value) return items.value;
+  const q = searchQuery.value.toLowerCase();
+  return items.value.filter(
+    (item) =>
+      item.ocr_text?.toLowerCase().includes(q) ||
+      formatDate(item.created_at).includes(q)
+  );
+});
 
-onMounted(() => {
-  loadHistory();
+onMounted(async () => {
+  await loadHistory();
 });
 
 async function loadHistory() {
   loading.value = true;
-  currentOffset.value = 0;
-  hasMore.value = true;
   try {
-    const search = searchText.value.trim() || undefined;
-    records.value = await invoke<ScreenshotRecord[]>("get_history", {
-      limit: PAGE_SIZE,
-      offset: 0,
-      search,
-    });
-    currentOffset.value = records.value.length;
-    hasMore.value = records.value.length === PAGE_SIZE;
+    items.value = await invoke<HistoryItem[]>("get_history", { limit: 100, offset: 0 });
   } catch (e) {
     console.error("Failed to load history:", e);
   } finally {
@@ -182,56 +82,170 @@ async function loadHistory() {
   }
 }
 
-async function loadMore() {
-  loading.value = true;
-  try {
-    const search = searchText.value.trim() || undefined;
-    const more = await invoke<ScreenshotRecord[]>("get_history", {
-      limit: PAGE_SIZE,
-      offset: currentOffset.value,
-      search,
-    });
-    records.value.push(...more);
-    currentOffset.value = records.value.length;
-    hasMore.value = more.length === PAGE_SIZE;
-  } catch (e) {
-    console.error("Failed to load more history:", e);
-  } finally {
-    loading.value = false;
-  }
-}
-
-function onSearchInput() {
-  if (searchDebounce) clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(() => {
-    loadHistory();
-  }, 400);
-}
-
-function selectRecord(record: ScreenshotRecord) {
-  previewRecord.value = record;
-}
-
-async function handleDelete(id: number) {
+async function deleteItem(id: number) {
   try {
     await invoke("delete_history_item", { id });
-    records.value = records.value.filter((r) => r.id !== id);
-    if (previewRecord.value?.id === id) {
-      previewRecord.value = null;
-    }
+    items.value = items.value.filter((i) => i.id !== id);
   } catch (e) {
-    console.error("Failed to delete history item:", e);
+    console.error("Failed to delete:", e);
   }
 }
 
-async function handleClearAll() {
-  if (!confirm("确定要清空所有历史记录吗？此操作不可撤销。")) return;
+async function clearAll() {
+  if (!confirm("确定清空全部历史？")) return;
   try {
     await invoke("clear_history");
-    records.value = [];
-    previewRecord.value = null;
+    items.value = [];
   } catch (e) {
-    console.error("Failed to clear history:", e);
+    console.error("Failed to clear:", e);
   }
 }
+
+function openItem(item: HistoryItem) {
+  // TODO: open in annotate view with the image
+  console.log("Open item:", item.id);
+}
+
+function formatDate(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+function onSearch() {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    // Reactive via computed
+  }, 200);
+}
 </script>
+
+<style scoped>
+.history-view {
+  padding: 24px;
+  max-width: 960px;
+  margin: 0 auto;
+  color: #e5e7eb;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.history-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.history-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-input {
+  background: #374151;
+  border: 1px solid #4b5563;
+  color: #e5e7eb;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  width: 180px;
+  outline: none;
+}
+.search-input:focus { border-color: #3b82f6; }
+
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-danger:hover { background: #b91c1c; }
+
+.loading, .empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #6b7280;
+}
+
+.hint { font-size: 13px; margin-top: 8px; }
+
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.history-card {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  position: relative;
+}
+.history-card:hover { border-color: #3b82f6; }
+
+.card-thumb {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+}
+
+.card-info {
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-date { font-size: 11px; color: #9ca3af; }
+
+.card-ocr-badge {
+  background: #3b82f6;
+  color: #fff;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.card-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0,0,0,0.6);
+  color: #9ca3af;
+  border: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.history-card:hover .card-delete { opacity: 1; }
+.card-delete:hover { color: #ef4444; }
+</style>

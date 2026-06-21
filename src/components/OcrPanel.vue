@@ -4,29 +4,32 @@
       <span class="ocr-title">OCR 识别结果</span>
       <button class="ocr-close" @click="$emit('close')">×</button>
     </div>
-    <div class="ocr-content">
-      <div v-if="loading" class="ocr-loading">识别中...</div>
-      <div v-else-if="error" class="ocr-error">{{ error }}</div>
-      <div v-else>
-        <div class="ocr-text" ref="ocrTextRef">{{ result?.text }}</div>
-        <div class="ocr-blocks" v-if="result?.blocks?.length">
-          <div v-for="(block, i) in result.blocks" :key="i" class="ocr-block">
-            <span class="ocr-block-text">{{ block.text }}</span>
-            <span class="ocr-block-conf">{{ (block.confidence * 100).toFixed(0) }}%</span>
-          </div>
+    <div v-if="loading" class="ocr-loading">
+      <span class="spinner"></span> 识别中...
+    </div>
+    <div v-else-if="error" class="ocr-error">
+      {{ error }}
+    </div>
+    <div v-else class="ocr-content">
+      <div class="ocr-toolbar">
+        <button @click="copyAll" title="复制全部">复制全部</button>
+        <button @click="copyBlocks" title="复制分块">分块复制</button>
+      </div>
+      <div class="ocr-text">
+        <pre>{{ result?.text || "" }}</pre>
+      </div>
+      <div v-if="result?.blocks?.length" class="ocr-blocks">
+        <div v-for="(block, i) in result.blocks" :key="i" class="ocr-block">
+          <span class="block-index">{{ i + 1 }}</span>
+          <span class="block-text">{{ block.text }}</span>
+          <span class="block-conf">{{ (block.confidence * 100).toFixed(1) }}%</span>
         </div>
       </div>
-    </div>
-    <div class="ocr-actions" v-if="result?.text">
-      <button @click="$emit('copy-text')">复制文字</button>
-      <button @click="selectAll">全选</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-
 interface OcrBlock {
   text: string;
   confidence: number;
@@ -47,48 +50,43 @@ defineProps<{
   error: string;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   close: [];
-  "copy-text": [];
+  copyText: [text: string];
 }>();
 
-const ocrTextRef = ref<HTMLDivElement | null>(null);
+function copyAll() {
+  // Will be handled by parent via copyOcrText
+  emit("copyText", "all");
+}
 
-function selectAll() {
-  if (!ocrTextRef.value) return;
-  const range = document.createRange();
-  range.selectNodeContents(ocrTextRef.value);
-  const selection = window.getSelection();
-  if (selection) {
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }
+function copyBlocks() {
+  emit("copyText", "blocks");
 }
 </script>
 
 <style scoped>
 .ocr-panel {
-  position: absolute;
-  top: 52px;
-  right: 8px;
-  width: 320px;
-  max-height: 400px;
+  position: fixed;
+  right: 16px;
+  top: 60px;
+  width: 360px;
+  max-height: 80vh;
   background: #1f2937;
   border: 1px solid #374151;
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  pointer-events: auto;
 }
 
 .ocr-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  align-items: center;
+  padding: 10px 14px;
   background: #111827;
   border-bottom: 1px solid #374151;
 }
@@ -106,103 +104,113 @@ function selectAll() {
   font-size: 18px;
   cursor: pointer;
   padding: 0 4px;
-  line-height: 1;
-  transition: color 0.15s;
+}
+.ocr-close:hover { color: #ef4444; }
+
+.ocr-loading {
+  padding: 24px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
-.ocr-close:hover {
-  color: #e5e7eb;
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #4b5563;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.ocr-error {
+  padding: 16px;
+  color: #ef4444;
+  font-size: 13px;
 }
 
 .ocr-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
 }
 
-.ocr-loading {
-  color: #9ca3af;
-  font-size: 13px;
-  text-align: center;
-  padding: 16px 0;
+.ocr-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #374151;
 }
 
-.ocr-error {
-  color: #f87171;
-  font-size: 13px;
-  padding: 8px;
-  background: rgba(248, 113, 113, 0.1);
+.ocr-toolbar button {
+  background: #374151;
+  color: #e5e7eb;
+  border: none;
+  padding: 4px 12px;
   border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
 }
+.ocr-toolbar button:hover { background: #4b5563; }
 
 .ocr-text {
-  color: #f3f4f6;
+  padding: 12px 14px;
+}
+
+.ocr-text pre {
+  color: #e5e7eb;
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
-  user-select: text;
-  cursor: text;
-  margin-bottom: 8px;
+  margin: 0;
+  font-family: "Microsoft YaHei", sans-serif;
 }
 
 .ocr-blocks {
+  padding: 8px 14px;
   border-top: 1px solid #374151;
-  padding-top: 8px;
-  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .ocr-block {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 4px 0;
-  border-bottom: 1px solid rgba(55, 65, 81, 0.5);
-}
-
-.ocr-block:last-child {
-  border-bottom: none;
-}
-
-.ocr-block-text {
-  color: #d1d5db;
   font-size: 12px;
+}
+
+.block-index {
+  background: #3b82f6;
+  color: #fff;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.block-text {
+  color: #d1d5db;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-right: 8px;
 }
 
-.ocr-block-conf {
+.block-conf {
   color: #6b7280;
-  font-size: 11px;
-  font-family: monospace;
+  font-size: 10px;
   flex-shrink: 0;
-}
-
-.ocr-actions {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid #374151;
-  background: #111827;
-}
-
-.ocr-actions button {
-  flex: 1;
-  padding: 6px 0;
-  border-radius: 4px;
-  border: 1px solid #374151;
-  background: #1f2937;
-  color: #e5e7eb;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.ocr-actions button:hover {
-  background: #374151;
-  border-color: #4b5563;
 }
 </style>
