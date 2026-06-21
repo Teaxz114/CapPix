@@ -2,6 +2,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct PinWindow {
     pub id: String,
     pub image_base64: String,

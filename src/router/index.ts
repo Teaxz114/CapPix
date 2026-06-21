@@ -6,6 +6,11 @@ const router = createRouter({
   routes: [
     { path: "/", name: "home", component: HomeView },
     {
+      path: "/screenshot",
+      name: "screenshot",
+      component: () => import("../views/ScreenshotView.vue"),
+    },
+    {
       path: "/annotate",
       name: "annotate",
       component: () => import("../views/AnnotateView.vue"),

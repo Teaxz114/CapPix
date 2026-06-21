@@ -67,9 +67,12 @@ pub fn run() {
                     tauri::async_runtime::spawn(async move {
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
-                                if let Err(e) = commands::clipboard::open_annotate_window(app.clone(), result.image_base64) {
-                                    log::error!("Failed to open annotate window: {}", e);
+                                if let Err(e) = commands::clipboard::open_screenshot_overlay(app.clone()) {
+                                    log::error!("Failed to open overlay: {}", e);
+                                    return;
                                 }
+                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                let _ = app.emit("screenshot-ready", result.image_base64);
                             }
                             Err(e) => log::error!("Capture failed: {}", e),
                         }
@@ -104,6 +107,8 @@ pub fn run() {
             recording::start_recording,
             recording::stop_recording,
             recording::get_recording_state,
+            recording::pause_recording,
+            recording::resume_recording,
             recording::record_to_gif,
         ])
         .run(tauri::generate_context!())

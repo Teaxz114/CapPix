@@ -1,7 +1,5 @@
 use crate::history::{HistoryDb, ScreenshotRecord};
 use std::sync::Mutex;
-use tauri::Manager;
-
 pub struct HistoryState {
     pub db: Mutex<HistoryDb>,
 }

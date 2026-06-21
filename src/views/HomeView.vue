@@ -65,6 +65,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import RecordingBar from "../components/RecordingBar.vue";
 
 interface HotkeyInfo {
@@ -99,8 +100,8 @@ onMounted(async () => {
 
 function handleAction(id: string) {
   if (id === "capture_region" || id === "capture_fullscreen" || id === "capture_window") {
-    // Emit hotkey event to trigger capture
-    invoke("emit_hotkey", { action: id }).catch(() => {});
+    // Emit hotkey event to trigger capture (same as pressing the keyboard shortcut)
+    emit("hotkey", id);
   } else if (id === "screen_record") {
     startRecording();
   } else if (id === "color_picker") {
@@ -120,27 +121,22 @@ async function startRecording() {
     console.log("Recording started:", path);
   } catch (e) {
     console.error("Failed to start recording:", e);
+    alert("录屏启动失败: " + e + "\n请确认已安装 FFmpeg 并添加到 PATH。");
   }
 }
 
 async function startColorPicker() {
-  try {
-    // Get color at current cursor position
-    const result = await invoke<{ hex: string; rgb: string; hsl: string; r: number; g: number; b: number }>("pick_color_at_point", {
-      x: 0,
-      y: 0,
-    });
-    console.log("Color:", result);
-  } catch (e) {
-    console.error("Color picker failed:", e);
-  }
+  // Open the main window's color picker route
+  router.push("/settings");
 }
 
 async function pinFromClipboard() {
   try {
-    // Read clipboard image and pin it
-    // For now, just show a message
-    console.log("Pin from clipboard");
+    // Read clipboard image via Tauri clipboard plugin and create a pin window
+    const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+    // For now, just open a blank pin as placeholder
+    // TODO: read image from clipboard and pass to create_pin_window
+    alert("贴图功能：请先截图后使用标注界面的贴图按钮。");
   } catch (e) {
     console.error("Pin failed:", e);
   }

@@ -59,6 +59,12 @@ pub fn setup_tray(app: &App) -> anyhow::Result<()> {
             "capture_window" => {
                 let _ = app.emit("hotkey", "capture_window");
             }
+            "pin_clipboard" => {
+                let _ = app.emit("tray-action", "pin_clipboard");
+            }
+            "color_picker" => {
+                let _ = app.emit("tray-action", "color_picker");
+            }
             "settings" | "history" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();

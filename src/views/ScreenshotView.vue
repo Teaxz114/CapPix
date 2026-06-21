@@ -463,7 +463,16 @@ function onContextMenu(e: MouseEvent) {
 
 function captureRegionFromMenu() {
   contextMenu.value = null;
-  // If there's a selection, use it; otherwise prompt drag selection
+  if (hasSelection.value) {
+    // Use the current selection
+    captureRegion(
+      selectionX.value + virtualScreenOffsetX,
+      selectionY.value + virtualScreenOffsetY,
+      selectionW.value,
+      selectionH.value
+    );
+  }
+  // If no selection, user needs to drag to create one
 }
 
 function captureFullscreen() {

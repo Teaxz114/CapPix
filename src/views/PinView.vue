@@ -34,13 +34,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const imageData = ref("");
 const scale = ref(1);
 const pinId = ref("");
-let unlisten: UnlistenFn | null = null;
+let unlisten: (() => void) | null = null;
 
 // Get pin ID from URL params
 const params = new URLSearchParams(window.location.search);

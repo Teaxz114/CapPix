@@ -1,6 +1,5 @@
 use super::WindowInfo;
 use anyhow::Result;
-use std::ptr::null_mut;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,

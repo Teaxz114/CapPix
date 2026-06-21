@@ -1,7 +1,5 @@
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenshotRecord {
     pub id: i64,

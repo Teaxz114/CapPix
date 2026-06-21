@@ -23,7 +23,7 @@ pub fn get_screen_list() -> Result<Vec<ScreenInfo>> {
     };
 
     unsafe {
-        EnumDisplayMonitors(
+        let _ = EnumDisplayMonitors(
             HDC(std::ptr::null_mut()),
             None,
             Some(monitor_enum_callback),

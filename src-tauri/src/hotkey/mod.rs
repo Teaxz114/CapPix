@@ -65,6 +65,7 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn unregister_hotkeys() {
     let hwnd = HWND(null_mut());
     for hk in &DEFAULT_HOTKEYS {

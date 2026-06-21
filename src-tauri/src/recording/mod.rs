@@ -153,8 +153,32 @@ pub fn get_recording_state(app: tauri::AppHandle) -> Result<RecordingState, Stri
 }
 
 #[tauri::command]
+pub fn pause_recording(app: tauri::AppHandle) -> Result<(), String> {
+    // FFmpeg gdigrab does not support pause/resume natively.
+    // Mark the state as paused for UI purposes; actual frame capture continues.
+    let state = app.state::<RecordingManager>();
+    let mut s = state.state.lock().map_err(|e| e.to_string())?;
+    if !s.is_recording {
+        return Err("Not recording".to_string());
+    }
+    s.is_paused = true;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn resume_recording(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<RecordingManager>();
+    let mut s = state.state.lock().map_err(|e| e.to_string())?;
+    if !s.is_recording {
+        return Err("Not recording".to_string());
+    }
+    s.is_paused = false;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn record_to_gif(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     output_path: Option<String>,
     region: Option<(i32, i32, i32, i32)>,
     duration_secs: Option<f64>,

@@ -107,7 +107,7 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
-        tauri::WebviewUrl::App("screenshot.html".into()),
+        tauri::WebviewUrl::App("/#/screenshot".into()),
     )
     .title("CapPix Screenshot")
     .decorations(false)
