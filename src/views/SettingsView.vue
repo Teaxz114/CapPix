@@ -75,6 +75,18 @@
         </div>
       </section>
 
+      <!-- General settings -->
+      <section class="settings-section">
+        <h3>通用</h3>
+        <div class="setting-row">
+          <label>主题</label>
+          <select v-model="config.theme">
+            <option value="dark">深色</option>
+            <option value="light">浅色</option>
+          </select>
+        </div>
+      </section>
+
       <!-- Hotkey display -->
       <section class="settings-section">
         <h3>快捷键</h3>
