@@ -21,6 +21,8 @@ export interface AppConfig {
   showMagnifier: boolean;
   pinOpacity: number; // 0.1-1.0
   theme: "dark" | "light";
+  // OCR
+  ocrLanguage: "ch" | "en" | "ch_en";
 }
 
 const defaultConfig: AppConfig = {
@@ -38,6 +40,7 @@ const defaultConfig: AppConfig = {
   showMagnifier: true,
   pinOpacity: 1.0,
   theme: "dark",
+  ocrLanguage: "ch_en",
 };
 
 export const useConfigStore = defineStore("config", () => {

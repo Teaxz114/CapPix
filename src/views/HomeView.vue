@@ -57,6 +57,7 @@
     <footer class="text-center text-gray-600 text-xs mt-12">
       CapPix v0.1.0 | MIT License
     </footer>
+    <RecordingBar />
   </div>
 </template>
 
@@ -64,6 +65,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
+import RecordingBar from "../components/RecordingBar.vue";
 
 interface HotkeyInfo {
   id: string;
@@ -96,7 +98,52 @@ onMounted(async () => {
 });
 
 function handleAction(id: string) {
-  console.log("Action:", id);
+  if (id === "capture_region" || id === "capture_fullscreen" || id === "capture_window") {
+    // Emit hotkey event to trigger capture
+    invoke("emit_hotkey", { action: id }).catch(() => {});
+  } else if (id === "screen_record") {
+    startRecording();
+  } else if (id === "color_picker") {
+    startColorPicker();
+  } else if (id === "pin_clipboard") {
+    pinFromClipboard();
+  }
+}
+
+async function startRecording() {
+  try {
+    const path = await invoke<string>("start_recording", {
+      outputPath: null,
+      region: null,
+      withAudio: false,
+    });
+    console.log("Recording started:", path);
+  } catch (e) {
+    console.error("Failed to start recording:", e);
+  }
+}
+
+async function startColorPicker() {
+  try {
+    // Get color at current cursor position
+    const result = await invoke<{ hex: string; rgb: string; hsl: string; r: number; g: number; b: number }>("pick_color_at_point", {
+      x: 0,
+      y: 0,
+    });
+    console.log("Color:", result);
+  } catch (e) {
+    console.error("Color picker failed:", e);
+  }
+}
+
+async function pinFromClipboard() {
+  try {
+    // Read clipboard image and pin it
+    // For now, just show a message
+    console.log("Pin from clipboard");
+  } catch (e) {
+    console.error("Pin failed:", e);
+  }
 }
 
 function goHistory() {

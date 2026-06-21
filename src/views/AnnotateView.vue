@@ -25,7 +25,6 @@
       :loading="ocrLoading"
       :error="ocrError"
       @close="showOcr = false"
-      @copy-text="copyOcrText"
     />
     <div v-if="statusMessage" class="status-bar">
       {{ statusMessage }}
@@ -67,7 +66,7 @@ const historyIndex = ref(-1);
 const showOcr = ref(false);
 const ocrResult = ref<OcrResult | null>(null);
 const ocrLoading = ref(false);
-const ocrError = ref("");
+const ocrError = ref<string | null>(null);
 
 let fabricCanvas: FabricCanvas | null = null;
 let isDrawing = false;
@@ -541,7 +540,7 @@ async function performOcr() {
   if (!fabricCanvas) return;
   showOcr.value = true;
   ocrLoading.value = true;
-  ocrError.value = "";
+  ocrError.value = null;
   try {
     const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
@@ -555,16 +554,6 @@ async function performOcr() {
     ocrError.value = String(e);
   } finally {
     ocrLoading.value = false;
-  }
-}
-
-async function copyOcrText() {
-  if (!ocrResult.value?.text) return;
-  try {
-    await navigator.clipboard.writeText(ocrResult.value.text);
-    setStatus("OCR 文字已复制");
-  } catch (e) {
-    setStatus("复制失败: " + e);
   }
 }
 

@@ -7,6 +7,8 @@ mod pin;
 mod recording;
 mod tray;
 
+use commands::history::HistoryState;
+use recording::RecordingManager;
 use tauri::{Emitter, Listener, Manager};
 
 pub fn run() {
@@ -21,8 +23,13 @@ pub fn run() {
             // Initialize history database
             let db_path = app.path().app_data_dir().unwrap().join("history.db");
             std::fs::create_dir_all(db_path.parent().unwrap()).ok();
-            let db = history::HistoryDB::new(&db_path)?;
-            app.manage(db);
+            let db = history::HistoryDb::new(&db_path.to_string_lossy()).map_err(|e| e.to_string())?;
+            app.manage(HistoryState {
+                db: std::sync::Mutex::new(db),
+            });
+
+            // Initialize recording manager
+            app.manage(RecordingManager::new());
 
             // Listen for hotkey events
             let app_handle = app.handle().clone();
@@ -30,7 +37,6 @@ pub fn run() {
                 let payload = event.payload().to_string();
 
                 if payload.contains("capture_region") {
-                    // Region capture: take screenshot, open overlay for selection
                     let app = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
                         match crate::capture::screen::capture_screen(0) {
@@ -46,7 +52,6 @@ pub fn run() {
                         }
                     });
                 } else if payload.contains("capture_fullscreen") {
-                    // Fullscreen capture: take screenshot, open annotate editor directly
                     let app = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
                         match crate::capture::screen::capture_screen(0) {
@@ -59,7 +64,6 @@ pub fn run() {
                         }
                     });
                 } else if payload.contains("capture_window") {
-                    // Window capture: same as fullscreen for now (future: capture specific window)
                     let app = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
                         match crate::capture::screen::capture_screen(0) {
@@ -89,6 +93,11 @@ pub fn run() {
             commands::clipboard::open_annotate_window,
             commands::save::save_image_to_file,
             commands::color::pick_color_at_point,
+            commands::history::history_save,
+            commands::history::history_list,
+            commands::history::history_search,
+            commands::history::history_delete,
+            commands::history::history_count,
             ocr::ocr_image,
             pin::create_pin_window,
             pin::close_pin_window,
@@ -97,10 +106,6 @@ pub fn run() {
             recording::stop_recording,
             recording::get_recording_state,
             recording::record_to_gif,
-            history::save_to_history,
-            history::get_history,
-            history::delete_history_item,
-            history::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CapPix");
