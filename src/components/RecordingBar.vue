@@ -17,7 +17,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 interface RecordingStateInfo {
   is_recording: boolean;
@@ -33,7 +32,6 @@ const recordingState = ref<RecordingStateInfo>({
   duration_secs: 0,
 });
 
-let unlisten: UnlistenFn | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
@@ -43,7 +41,6 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  if (unlisten) unlisten();
   if (pollTimer) clearInterval(pollTimer);
 });
 

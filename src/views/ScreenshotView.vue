@@ -54,7 +54,7 @@
 
     <!-- Context menu -->
     <div v-if="contextMenu" class="context-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
-      <button @click="captureRegion">截取选区</button>
+      <button @click="captureRegionFromMenu">截取选区</button>
       <button @click="captureFullscreen">截取全屏</button>
       <button @click="pickColor">取色</button>
       <button @click="ocrRegion">OCR 识别</button>
@@ -153,7 +153,8 @@ interface WindowRegion {
 }
 
 const windowHighlight = ref<WindowRegion | null>(null);
-let detectTimer: ReturnType<typeof setTimeout> | null = null;
+let windowDetectTimer: ReturnType<typeof setTimeout> | null = null;
+const WINDOW_DETECT_DEBOUNCE = 150;
 const contextMenu = ref<{ x: number; y: number } | null>(null);
 
 // Virtual screen offset (for multi-monitor support)
@@ -460,7 +461,7 @@ function onContextMenu(e: MouseEvent) {
   contextMenu.value = { x: e.clientX, y: e.clientY };
 }
 
-function captureRegion() {
+function captureRegionFromMenu() {
   contextMenu.value = null;
   // If there's a selection, use it; otherwise prompt drag selection
 }

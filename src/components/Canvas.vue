@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, watch } from "vue";
-import { Canvas, Rect, Ellipse, Line, IText, Path, PencilBrush } from "fabric";
+import { Canvas, Rect, Ellipse, Line, IText, Path, PencilBrush, FabricImage } from "fabric";
 
 const props = defineProps<{
   imageBase64: string;
@@ -83,20 +83,22 @@ function loadImageAsBackground(base64: string) {
     const offsetX = (canvasWidth - displayWidth) / 2;
     const offsetY = (canvasHeight - displayHeight) / 2;
 
-    fabricCanvas.setBackgroundImage(
-      `data:image/png;base64,${base64}`,
-      () => {
-        fabricCanvas?.renderAll();
-      },
-      {
+    // Fabric.js 6: use backgroundImage property instead of setBackgroundImage method
+    const bgImgEl = new Image();
+    bgImgEl.onload = () => {
+      if (!fabricCanvas) return;
+      const bgFabricImg = new FabricImage(bgImgEl, {
         scaleX: scale,
         scaleY: scale,
         left: offsetX,
         top: offsetY,
         originX: "left",
         originY: "top",
-      }
-    );
+      });
+      fabricCanvas.backgroundImage = bgFabricImg;
+      fabricCanvas.renderAll();
+    };
+    bgImgEl.src = `data:image/png;base64,${base64}`;
   };
   img.src = `data:image/png;base64,${base64}`;
 }

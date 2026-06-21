@@ -194,7 +194,7 @@ function onMouseDown(opt: any) {
   }
 
   if (currentTool.value === "text") {
-    const text = new ITEXT("文字", {
+    const text = new IText("文字", {
       left: pointer.x,
       top: pointer.y,
       fontSize: 20,
@@ -224,7 +224,7 @@ function onMouseDown(opt: any) {
     });
     (circle as any)._cappixNumber = nextNum;
     fabricCanvas.add(circle);
-    const numText = new ITEXT(String(nextNum), {
+    const numText = new IText(String(nextNum), {
       left: pointer.x - 5,
       top: pointer.y - 10,
       fontSize: 16,
@@ -501,7 +501,7 @@ async function saveToFile() {
   if (!fabricCanvas) return;
   setStatus("正在保存...");
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
+    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
     await invoke("save_image_to_file", { imageBase64: base64 });
     setStatus("已保存");
@@ -514,7 +514,7 @@ async function copyToClipboard() {
   if (!fabricCanvas) return;
   setStatus("正在复制...");
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
+    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
     await invoke("copy_image_to_clipboard", { imageBase64: base64 });
     setStatus("已复制到剪贴板");
@@ -527,7 +527,7 @@ async function pinToDesktop() {
   if (!fabricCanvas) return;
   setStatus("正在贴图...");
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
+    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
     await invoke("create_pin_window", { imageBase64: base64 });
     setStatus("已贴图到桌面");
@@ -542,7 +542,7 @@ async function performOcr() {
   ocrLoading.value = true;
   ocrError.value = null;
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
+    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
     const result = await invoke<OcrResult>("ocr_image", { imageBase64: base64 });
     if (result.error) {
