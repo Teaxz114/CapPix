@@ -30,6 +30,43 @@ pub fn run() {
             // Initialize recording manager
             app.manage(recording::RecordingManager::new());
 
+            // Restore pinned windows from database
+            {
+                let state = app.state::<HistoryState>();
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let pins = db.list_pins().map_err(|e| e.to_string())?;
+
+                for pin_record in &pins {
+                    let image_path = std::path::PathBuf::from(&pin_record.image_path);
+                    if !image_path.exists() {
+                        // Image file no longer exists, remove the pin record
+                        let _ = db.delete_pin(&pin_record.id);
+                    }
+                }
+                drop(db); // Release lock before creating windows
+
+                for pin_record in pins {
+                    let image_path = std::path::PathBuf::from(&pin_record.image_path);
+                    if image_path.exists() {
+                        if let Ok(image_data) = std::fs::read(&image_path) {
+                            use base64::Engine;
+                            use base64::engine::general_purpose::STANDARD;
+                            let image_base64 = STANDARD.encode(&image_data);
+                            if let Ok(window_id) = crate::pin::create_pin_window_at(
+                                app.handle().clone(),
+                                image_base64,
+                                pin_record.x,
+                                pin_record.y,
+                                pin_record.width,
+                                pin_record.height,
+                            ) {
+                                log::info!("Restored pin: {} at ({}, {})", window_id, pin_record.x, pin_record.y);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Listen for hotkey events
             let app_handle = app.handle().clone();
             app.listen("hotkey", move |event| {
@@ -100,6 +137,10 @@ pub fn run() {
             commands::history::history_search,
             commands::history::history_delete,
             commands::history::history_count,
+            commands::history::pin_save,
+            commands::history::pin_list,
+            commands::history::pin_delete,
+            commands::history::pin_update_position,
             ocr::ocr_image,
             pin::create_pin_window,
             pin::close_pin_window,

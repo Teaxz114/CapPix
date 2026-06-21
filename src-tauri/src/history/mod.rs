@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenshotRecord {
     pub id: i64,
@@ -9,6 +10,19 @@ pub struct ScreenshotRecord {
     pub height: u32,
     pub source: String,
     pub ocr_text: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PinRecord {
+    pub id: String,
+    pub image_path: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub opacity: f64,
+    pub topmost: bool,
+    pub created_at: String,
 }
 
 pub struct HistoryDb {
@@ -28,10 +42,24 @@ impl HistoryDb {
                 source TEXT NOT NULL DEFAULT 'region',
                 ocr_text TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_history_ts ON screenshot_history(timestamp DESC);",
+            CREATE INDEX IF NOT EXISTS idx_history_ts ON screenshot_history(timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS pins (
+                id TEXT PRIMARY KEY,
+                image_path TEXT NOT NULL,
+                x REAL NOT NULL DEFAULT 100,
+                y REAL NOT NULL DEFAULT 100,
+                width REAL NOT NULL DEFAULT 400,
+                height REAL NOT NULL DEFAULT 300,
+                opacity REAL NOT NULL DEFAULT 1.0,
+                topmost INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );",
         )?;
         Ok(Self { conn })
     }
+
+    // --- Screenshot history methods ---
 
     pub fn insert(&self, record: &ScreenshotRecord) -> SqlResult<i64> {
         self.conn.execute(
@@ -85,5 +113,48 @@ impl HistoryDb {
 
     pub fn count(&self) -> SqlResult<i64> {
         self.conn.query_row("SELECT COUNT(*) FROM screenshot_history", [], |row| row.get(0))
+    }
+
+    // --- Pin persistence methods ---
+
+    pub fn save_pin(&self, pin: &PinRecord) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO pins (id, image_path, x, y, width, height, opacity, topmost) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![pin.id, pin.image_path, pin.x, pin.y, pin.width, pin.height, pin.opacity, pin.topmost as i32],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_pins(&self) -> SqlResult<Vec<PinRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, image_path, x, y, width, height, opacity, topmost, created_at FROM pins ORDER BY created_at"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PinRecord {
+                id: row.get(0)?,
+                image_path: row.get(1)?,
+                x: row.get(2)?,
+                y: row.get(3)?,
+                width: row.get(4)?,
+                height: row.get(5)?,
+                opacity: row.get(6)?,
+                topmost: row.get::<_, i32>(7)? != 0,
+                created_at: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_pin(&self, id: &str) -> SqlResult<()> {
+        self.conn.execute("DELETE FROM pins WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn update_pin_position(&self, id: &str, x: f64, y: f64) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE pins SET x = ?1, y = ?2 WHERE id = ?3",
+            params![x, y, id],
+        )?;
+        Ok(())
     }
 }

@@ -56,6 +56,51 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
     Ok(id)
 }
 
+pub fn create_pin_window_at(
+    app: AppHandle,
+    image_base64: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<String, String> {
+    let id = format!("pin-{}", uuid::Uuid::new_v4());
+    use tauri::WebviewWindowBuilder;
+
+    let url = format!("/pin?id={}", id);
+    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App(url.into()))
+        .title("CapPix Pin")
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .inner_size(width, height)
+        .position(x, y)
+        .resizable(true)
+        .transparent(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Enable layered window for opacity support
+    if let Some(window) = app.get_webview_window(&id) {
+        let raw_hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let hwnd = HWND(raw_hwnd.0);
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
+        }
+    }
+
+    let _ = app.emit(
+        "pin-image",
+        serde_json::json!({
+            "id": id,
+            "image_base64": image_base64,
+        }),
+    );
+
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn close_pin_window(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&id) {
