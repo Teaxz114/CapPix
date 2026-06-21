@@ -3,6 +3,7 @@
     class="pin-container"
     data-tauri-drag-region
     @wheel.prevent="onWheel"
+    :style="{ opacity: opacity }"
   >
     <!-- Close button -->
     <div class="pin-close" @click.stop="close">×</div>
@@ -25,6 +26,11 @@
       <button @click.stop="zoomIn" title="放大">+</button>
       <button @click.stop="zoomOut" title="缩小">−</button>
       <button @click.stop="resetZoom" title="重置">1:1</button>
+      <span class="toolbar-sep"></span>
+      <button @click.stop="decreaseOpacity" title="降低透明度">◐</button>
+      <button @click.stop="increaseOpacity" title="增加透明度">◑</button>
+      <button @click.stop="toggleClickthrough" :class="{ active: clickthrough }" title="鼠标穿透">✦</button>
+      <span class="toolbar-sep"></span>
       <button @click.stop="copyImage" title="复制">复制</button>
       <button @click.stop="close" title="关闭">关闭</button>
     </div>
@@ -40,6 +46,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const imageData = ref("");
 const scale = ref(1);
 const pinId = ref("");
+const opacity = ref(1);
+const clickthrough = ref(false);
 let unlisten: (() => void) | null = null;
 
 // Get pin ID from URL params
@@ -61,7 +69,6 @@ onUnmounted(() => {
 
 function onImageLoad(e: Event) {
   const img = e.target as HTMLImageElement;
-  // If the image is larger than 800x600, scale it down to fit
   const maxW = 800;
   const maxH = 600;
   if (img.naturalWidth > maxW || img.naturalHeight > maxH) {
@@ -70,7 +77,6 @@ function onImageLoad(e: Event) {
     scale.value = Math.min(ratioW, ratioH);
   }
 
-  // Resize the window to fit the scaled image
   const w = img.naturalWidth * scale.value;
   const h = img.naturalHeight * scale.value;
   invoke("resize_pin_window", { id: pinId.value, width: w, height: h + 4 });
@@ -107,8 +113,36 @@ async function updateWindowSize() {
   const h = img.naturalHeight * scale.value;
   try {
     await invoke("resize_pin_window", { id: pinId.value, width: w, height: h + 4 });
-  } catch (_) {
-    // ignore resize errors
+  } catch (_) {}
+}
+
+// Opacity controls
+async function increaseOpacity() {
+  opacity.value = Math.min(1, opacity.value + 0.1);
+  await applyOpacity();
+}
+
+async function decreaseOpacity() {
+  opacity.value = Math.max(0.1, opacity.value - 0.1);
+  await applyOpacity();
+}
+
+async function applyOpacity() {
+  try {
+    await invoke("set_pin_opacity", { id: pinId.value, opacity: opacity.value });
+  } catch (e) {
+    console.error("Set opacity failed:", e);
+  }
+}
+
+// Clickthrough toggle
+async function toggleClickthrough() {
+  clickthrough.value = !clickthrough.value;
+  try {
+    await invoke("set_pin_clickthrough", { id: pinId.value, clickthrough: clickthrough.value });
+  } catch (e) {
+    console.error("Set clickthrough failed:", e);
+    clickthrough.value = !clickthrough.value; // revert on error
   }
 }
 
@@ -126,7 +160,6 @@ async function close() {
   try {
     await invoke("close_pin_window", { id: pinId.value });
   } catch (_) {
-    // fallback: close directly
     await getCurrentWindow().close();
   }
 }
@@ -141,7 +174,6 @@ function startResize(e: MouseEvent) {
   const onMouseMove = async (ev: MouseEvent) => {
     const dx = ev.clientX - startX;
     const dy = ev.clientY - startY;
-    // We need to read current size, then apply delta
     try {
       const size = await currentWindow.innerSize();
       const newW = Math.max(100, size.width + dx);
@@ -171,6 +203,7 @@ function startResize(e: MouseEvent) {
   border-radius: 4px;
   cursor: default;
   user-select: none;
+  transition: opacity 0.15s;
 }
 
 .pin-image {
@@ -241,6 +274,7 @@ function startResize(e: MouseEvent) {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  align-items: center;
   gap: 2px;
   padding: 3px 6px;
   background: rgba(31, 41, 55, 0.92);
@@ -254,6 +288,13 @@ function startResize(e: MouseEvent) {
 .pin-container:hover .pin-toolbar {
   opacity: 1;
   pointer-events: auto;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 2px;
 }
 
 .pin-toolbar button {
@@ -270,6 +311,11 @@ function startResize(e: MouseEvent) {
 
 .pin-toolbar button:hover {
   background: #374151;
+  color: #ffffff;
+}
+
+.pin-toolbar button.active {
+  background: #3b82f6;
   color: #ffffff;
 }
 </style>

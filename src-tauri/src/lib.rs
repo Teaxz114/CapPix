@@ -104,6 +104,8 @@ pub fn run() {
             pin::create_pin_window,
             pin::close_pin_window,
             pin::resize_pin_window,
+            pin::set_pin_opacity,
+            pin::set_pin_clickthrough,
             recording::start_recording,
             recording::stop_recording,
             recording::get_recording_state,
