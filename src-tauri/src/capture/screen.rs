@@ -48,7 +48,7 @@ unsafe extern "system" fn monitor_enum_callback(
     };
 
     if GetMonitorInfoW(hmonitor, &mut info).0 != 0 {
-        let is_primary = info.dwFlags & 1 != 0; // MONITORINFOF_PRIMARY
+        let is_primary = info.dwFlags & 1 != 0;
         ctx.monitors.push(ScreenInfo {
             id: ctx.index,
             x: info.rcMonitor.left,
@@ -60,7 +60,7 @@ unsafe extern "system" fn monitor_enum_callback(
         ctx.index += 1;
     }
 
-    BOOL(1) // Continue enumeration
+    BOOL(1)
 }
 
 /// Capture a specific screen by index (0-based)
@@ -99,6 +99,9 @@ pub fn capture_rect(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureRe
         );
     }
 
+    // TODO: Future optimization — DXGI Desktop Duplication (Win8+) for GPU-accelerated capture.
+    // The three-tier fallback per design: WGC → DXGI → GDI.
+    // Currently using GDI which works on all Windows versions reliably.
     capture_rect_gdi(x, y, width, height)
 }
 

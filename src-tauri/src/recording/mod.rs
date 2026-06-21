@@ -74,11 +74,17 @@ pub async fn start_recording(
 
     cmd.arg("-i").arg("desktop");
 
-    // Audio from microphone (optional)
+    // Audio capture: optional system audio (WASAPI loopback) or microphone (dshow)
+    // System audio uses WASAPI loopback: -f wasapi -i "Stereo Mix (设备名)"
+    // Microphone uses DirectShow: -f dshow -i "audio=麦克风设备名"
     if with_audio.unwrap_or(false) {
-        cmd.arg("-f").arg("dshow")
-            .arg("-i").arg("audio=麦克风")
-            .arg("-c:a").arg("aac");
+        // Try system audio (WASAPI loopback) first — captures what you hear
+        // FFmpeg on Windows supports: -f wasapi -i "{GUID}"
+        // The loopback device name can be enumerated; for now use a common default
+        cmd.arg("-f").arg("wasapi")
+            .arg("-i").arg("audio=Stereo Mix")
+            .arg("-c:a").arg("aac")
+            .arg("-b:a").arg("128k");
     }
 
     cmd.arg("-c:v").arg("libx264")

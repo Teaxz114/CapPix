@@ -81,6 +81,7 @@ const captureTools = [
   { id: "capture_region", name: "区域截图", shortcut: "Ctrl+Shift+A" },
   { id: "capture_fullscreen", name: "全屏截图", shortcut: "Ctrl+Shift+S" },
   { id: "capture_window", name: "窗口截图", shortcut: "Ctrl+Shift+Q" },
+  { id: "capture_scroll", name: "滚动截图", shortcut: "" },
 ];
 
 const utilTools = [
@@ -102,6 +103,8 @@ function handleAction(id: string) {
   if (id === "capture_region" || id === "capture_fullscreen" || id === "capture_window") {
     // Emit hotkey event to trigger capture (same as pressing the keyboard shortcut)
     emit("hotkey", id);
+  } else if (id === "capture_scroll") {
+    alert("滚动截图：请先截图当前区域，然后按住鼠标滚轮向下滚动，系统会自动拼接长图。\n\n（该功能正在开发中，敬请期待）");
   } else if (id === "screen_record") {
     startRecording();
   } else if (id === "color_picker") {
@@ -120,8 +123,12 @@ async function startRecording() {
     });
     console.log("Recording started:", path);
   } catch (e) {
-    console.error("Failed to start recording:", e);
-    alert("录屏启动失败: " + e + "\n请确认已安装 FFmpeg 并添加到 PATH。");
+    const msg = String(e);
+    if (msg.includes("ffmpeg") || msg.includes("Failed to start")) {
+      alert("录屏需要 FFmpeg，请先安装并添加到 PATH。\n\n下载地址: https://ffmpeg.org/download.html\n\nWindows 推荐: https://www.gyan.dev/ffmpeg/builds/");
+    } else {
+      alert("录屏启动失败: " + msg);
+    }
   }
 }
 
