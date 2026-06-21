@@ -13,10 +13,19 @@
       @save="saveToFile"
       @copy="copyToClipboard"
       @pin="pinToDesktop"
+      @ocr="performOcr"
     />
     <Canvas
       ref="canvasRef"
       :image-base64="imageBase64"
+    />
+    <OcrPanel
+      :visible="showOcr"
+      :result="ocrResult"
+      :loading="ocrLoading"
+      :error="ocrError"
+      @close="showOcr = false"
+      @copy-text="copyOcrText"
     />
     <div v-if="statusMessage" class="status-bar">
       {{ statusMessage }}
@@ -32,6 +41,20 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush } from "fabric";
 import Toolbar from "../components/Toolbar.vue";
 import CanvasComponent from "../components/Canvas.vue";
+import OcrPanel from "../components/OcrPanel.vue";
+
+interface OcrBlock {
+  text: string;
+  confidence: number;
+  bbox: number[][];
+}
+
+interface OcrResult {
+  text: string;
+  blocks: OcrBlock[];
+  elapsed?: number;
+  error?: string;
+}
 
 const canvasRef = ref<InstanceType<typeof CanvasComponent> | null>(null);
 const imageBase64 = ref("");
@@ -41,6 +64,10 @@ const currentStrokeWidth = ref(3);
 const statusMessage = ref("");
 const historyStack = ref<string[]>([]);
 const historyIndex = ref(-1);
+const showOcr = ref(false);
+const ocrResult = ref<OcrResult | null>(null);
+const ocrLoading = ref(false);
+const ocrError = ref("");
 
 let fabricCanvas: FabricCanvas | null = null;
 let isDrawing = false;
@@ -510,6 +537,37 @@ async function pinToDesktop() {
   }
 }
 
+async function performOcr() {
+  if (!fabricCanvas) return;
+  showOcr.value = true;
+  ocrLoading.value = true;
+  ocrError.value = "";
+  try {
+    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1 });
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const result = await invoke<OcrResult>("ocr_image", { imageBase64: base64 });
+    if (result.error) {
+      ocrError.value = result.error;
+    } else {
+      ocrResult.value = result;
+    }
+  } catch (e) {
+    ocrError.value = String(e);
+  } finally {
+    ocrLoading.value = false;
+  }
+}
+
+async function copyOcrText() {
+  if (!ocrResult.value?.text) return;
+  try {
+    await navigator.clipboard.writeText(ocrResult.value.text);
+    setStatus("OCR 文字已复制");
+  } catch (e) {
+    setStatus("复制失败: " + e);
+  }
+}
+
 function setStatus(msg: string) {
   statusMessage.value = msg;
   setTimeout(() => {
@@ -526,6 +584,7 @@ function setStatus(msg: string) {
   height: 100vh;
   background: #111827;
   overflow: hidden;
+  position: relative;
 }
 
 .status-bar {

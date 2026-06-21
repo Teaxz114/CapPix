@@ -1,6 +1,8 @@
 mod capture;
 mod commands;
+mod history;
 mod hotkey;
+mod ocr;
 mod pin;
 mod tray;
 
@@ -14,6 +16,12 @@ pub fn run() {
         .setup(|app| {
             tray::setup_tray(app)?;
             hotkey::register_hotkeys(app.handle())?;
+
+            // Initialize history database
+            let db_path = app.path().app_data_dir().unwrap().join("history.db");
+            std::fs::create_dir_all(db_path.parent().unwrap()).ok();
+            let db = history::HistoryDB::new(&db_path)?;
+            app.manage(db);
 
             // Listen for hotkey events
             let app_handle = app.handle().clone();
@@ -79,9 +87,14 @@ pub fn run() {
             commands::clipboard::open_screenshot_overlay,
             commands::clipboard::open_annotate_window,
             commands::save::save_image_to_file,
+            ocr::ocr_image,
             pin::create_pin_window,
             pin::close_pin_window,
             pin::resize_pin_window,
+            history::save_to_history,
+            history::get_history,
+            history::delete_history_item,
+            history::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CapPix");

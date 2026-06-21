@@ -15,6 +15,16 @@ const router = createRouter({
       name: "pin",
       component: () => import("../views/PinView.vue"),
     },
+    {
+      path: "/history",
+      name: "history",
+      component: () => import("../views/HistoryView.vue"),
+    },
+    {
+      path: "/settings",
+      name: "settings",
+      component: () => import("../views/SettingsView.vue"),
+    },
   ],
 });
 

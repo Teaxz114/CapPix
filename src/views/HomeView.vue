@@ -40,6 +40,20 @@
       </div>
     </section>
 
+    <section class="mb-8">
+      <h2 class="text-lg font-semibold text-gray-200 mb-4 border-b border-gray-700 pb-2">更多</h2>
+      <div class="grid grid-cols-2 gap-3">
+        <button class="bg-gray-800 hover:bg-gray-700 rounded-lg p-4 text-left transition-colors" @click="goHistory">
+          <div class="text-sm font-medium text-gray-100">历史记录</div>
+          <div class="text-xs text-gray-500 mt-1">查看截图历史</div>
+        </button>
+        <button class="bg-gray-800 hover:bg-gray-700 rounded-lg p-4 text-left transition-colors" @click="goSettings">
+          <div class="text-sm font-medium text-gray-100">设置</div>
+          <div class="text-xs text-gray-500 mt-1">快捷键/格式/主题</div>
+        </button>
+      </div>
+    </section>
+
     <footer class="text-center text-gray-600 text-xs mt-12">
       CapPix v0.1.0 | MIT License
     </footer>
@@ -48,6 +62,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 
 interface HotkeyInfo {
@@ -56,6 +71,7 @@ interface HotkeyInfo {
   shortcut: string;
 }
 
+const router = useRouter();
 const hotkeys = ref<HotkeyInfo[]>([]);
 
 const captureTools = [
@@ -80,8 +96,14 @@ onMounted(async () => {
 });
 
 function handleAction(id: string) {
-  // For now, just emit the hotkey event
-  // Later this will trigger actual functionality
   console.log("Action:", id);
+}
+
+function goHistory() {
+  router.push("/history");
+}
+
+function goSettings() {
+  router.push("/settings");
 }
 </script>
