@@ -18,12 +18,18 @@ pub struct OcrResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranslateResult {
+    pub original: String,
+    pub translated: String,
+    pub source_lang: String,
+    pub target_lang: String,
+}
+
 #[tauri::command]
 pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<OcrResult, String> {
-    // Find the Python executable
     let python = find_python().ok_or("Python not found")?;
 
-    // Find the OCR worker script
     let script_path = app
         .path()
         .resource_dir()
@@ -32,7 +38,6 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
             std::path::PathBuf::from("../scripts/ocr_worker.py")
         });
 
-    // Fallback: try relative to current exe
     let script_path = if script_path.exists() {
         script_path
     } else {
@@ -43,7 +48,6 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
         if candidate.exists() {
             candidate
         } else {
-            // Dev mode: relative to project root
             std::path::PathBuf::from("scripts/ocr_worker.py")
         }
     };
@@ -52,7 +56,6 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
         return Err(format!("OCR worker script not found: {:?}", script_path));
     }
 
-    // Spawn Python subprocess
     let mut child = tokio::process::Command::new(&python)
         .arg(&script_path)
         .stdin(Stdio::piped())
@@ -61,7 +64,6 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
         .spawn()
         .map_err(|e| format!("Failed to spawn OCR process: {}", e))?;
 
-    // Write base64 to stdin
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
         stdin
@@ -71,7 +73,6 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
         drop(stdin);
     }
 
-    // Read output with timeout
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         child.wait_with_output(),
@@ -91,8 +92,88 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
     Ok(result)
 }
 
+#[tauri::command]
+pub async fn ocr_translate(
+    text: String,
+    target_lang: Option<String>,
+) -> Result<TranslateResult, String> {
+    let target = target_lang.unwrap_or_else(|| "en".to_string());
+
+    // Determine source language heuristically
+    let source_lang = detect_language(&text);
+
+    // If source and target are the same, swap target
+    let effective_target = if source_lang == target {
+        if target == "en" { "zh".to_string() } else { "en".to_string() }
+    } else {
+        target
+    };
+
+    // Use MyMemory free translation API (no key required, 5000 chars/day)
+    let encoded_text = urlencoding::encode(&text);
+    let lang_pair = format!("{}|{}", source_lang, effective_target);
+    let url = format!(
+        "https://api.mymemory.translated.net/get?q={}&langpair={}",
+        encoded_text, lang_pair
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("Translation request failed: {}", e))?;
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse translation response: {}", e))?;
+
+    let translated = body["responseData"]["translatedText"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    Ok(TranslateResult {
+        original: text,
+        translated,
+        source_lang: source_lang.to_string(),
+        target_lang: effective_target,
+    })
+}
+
+/// Simple heuristic language detection based on character ranges
+fn detect_language(text: &str) -> &'static str {
+    let mut cjk_count = 0;
+    let mut latin_count = 0;
+    let mut hiragana_katakana = 0;
+    let mut hangul = 0;
+
+    for ch in text.chars() {
+        if ('\u{4E00}'..='\u{9FFF}').contains(&ch) {
+            cjk_count += 1;
+        } else if ch.is_ascii_alphabetic() {
+            latin_count += 1;
+        } else if ('\u{3040}'..='\u{30FF}').contains(&ch) {
+            hiragana_katakana += 1;
+        } else if ('\u{AC00}'..='\u{D7AF}').contains(&ch) {
+            hangul += 1;
+        }
+    }
+
+    if hiragana_katakana > cjk_count && hiragana_katakana > latin_count {
+        "ja"
+    } else if hangul > cjk_count && hangul > latin_count {
+        "ko"
+    } else if cjk_count > latin_count {
+        "zh"
+    } else {
+        "en"
+    }
+}
+
 fn find_python() -> Option<String> {
-    // Try python3 first, then python
     for cmd in &["python", "python3"] {
         if which_python(cmd).is_some() {
             return Some(cmd.to_string());

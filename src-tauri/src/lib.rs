@@ -142,6 +142,7 @@ pub fn run() {
             commands::history::pin_delete,
             commands::history::pin_update_position,
             ocr::ocr_image,
+            ocr::ocr_translate,
             pin::create_pin_window,
             pin::close_pin_window,
             pin::resize_pin_window,

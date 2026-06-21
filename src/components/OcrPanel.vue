@@ -14,8 +14,31 @@
       <div class="ocr-toolbar">
         <button @click="copyAll" title="复制全部">复制全部</button>
         <button @click="copyBlocks" title="复制分块">分块复制</button>
+        <button @click="translate" :disabled="translating" title="翻译">
+          {{ translating ? "翻译中..." : "翻译" }}
+        </button>
+        <select v-model="targetLang" class="lang-select" title="目标语言">
+          <option value="en">英语</option>
+          <option value="zh">中文</option>
+          <option value="ja">日语</option>
+          <option value="ko">韩语</option>
+        </select>
       </div>
-      <div class="ocr-text">{{ result?.text || "无识别结果" }}</div>
+
+      <!-- Original OCR text -->
+      <div class="ocr-text-section">
+        <div class="section-label">原文</div>
+        <div class="ocr-text">{{ result?.text || "无识别结果" }}</div>
+      </div>
+
+      <!-- Translation result (shown after translation) -->
+      <div v-if="translation" class="ocr-text-section translated">
+        <div class="section-label">翻译 ({{ translation.source_lang }} → {{ translation.target_lang }})</div>
+        <div class="ocr-text">{{ translation.translated }}</div>
+        <button class="copy-translation" @click="copyTranslation">复制翻译</button>
+      </div>
+
+      <!-- OCR blocks -->
       <div v-if="result?.blocks?.length" class="ocr-blocks">
         <div v-for="(block, i) in result.blocks" :key="i" class="ocr-block" @click="copyText(block.text)">
           <span class="block-index">{{ i + 1 }}</span>
@@ -44,16 +67,27 @@ interface OcrResult {
   error?: string;
 }
 
+interface TranslateResult {
+  original: string;
+  translated: string;
+  source_lang: string;
+  target_lang: string;
+}
+
 const visible = ref(false);
 const loading = ref(false);
 const error = ref("");
 const result = ref<OcrResult | null>(null);
+const translation = ref<TranslateResult | null>(null);
+const translating = ref(false);
+const targetLang = ref("en");
 
 async function recognize(imageBase64: string) {
   visible.value = true;
   loading.value = true;
   error.value = "";
   result.value = null;
+  translation.value = null;
   try {
     result.value = await invoke<OcrResult>("ocr_image", { imageBase64 });
     if (result.value?.error) {
@@ -63,6 +97,21 @@ async function recognize(imageBase64: string) {
     error.value = String(e);
   } finally {
     loading.value = false;
+  }
+}
+
+async function translate() {
+  if (!result.value?.text) return;
+  translating.value = true;
+  try {
+    translation.value = await invoke<TranslateResult>("ocr_translate", {
+      text: result.value.text,
+      targetLang: targetLang.value,
+    });
+  } catch (e) {
+    console.error("Translation failed:", e);
+  } finally {
+    translating.value = false;
   }
 }
 
@@ -84,6 +133,12 @@ function copyBlocks() {
   if (result.value?.blocks) {
     const text = result.value.blocks.map((b, i) => `${i + 1}. ${b.text}`).join("\n");
     navigator.clipboard.writeText(text);
+  }
+}
+
+function copyTranslation() {
+  if (translation.value?.translated) {
+    navigator.clipboard.writeText(translation.value.translated);
   }
 }
 
@@ -161,6 +216,7 @@ defineExpose({ recognize, visible });
   gap: 8px;
   padding: 8px 14px;
   border-bottom: 1px solid #374151;
+  align-items: center;
 }
 .ocr-toolbar button {
   background: #374151;
@@ -172,16 +228,47 @@ defineExpose({ recognize, visible });
   cursor: pointer;
 }
 .ocr-toolbar button:hover { background: #4b5563; }
-.ocr-text {
+.ocr-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.lang-select {
+  background: #374151;
+  color: #e5e7eb;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ocr-text-section {
   padding: 12px 14px;
+  border-bottom: 1px solid #374151;
+}
+.section-label {
+  color: #6b7280;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.ocr-text-section.translated {
+  background: rgba(59, 130, 246, 0.1);
+}
+.ocr-text {
   color: #e5e7eb;
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
-  border-bottom: 1px solid #374151;
 }
+.copy-translation {
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.copy-translation:hover { background: #2563eb; }
 .ocr-blocks {
   padding: 8px 0;
 }
