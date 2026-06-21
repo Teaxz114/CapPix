@@ -88,6 +88,7 @@ pub fn run() {
             commands::clipboard::open_screenshot_overlay,
             commands::clipboard::open_annotate_window,
             commands::save::save_image_to_file,
+            commands::color::pick_color_at_point,
             ocr::ocr_image,
             pin::create_pin_window,
             pin::close_pin_window,

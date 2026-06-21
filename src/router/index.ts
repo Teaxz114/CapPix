@@ -11,6 +11,11 @@ const router = createRouter({
       component: () => import("../views/AnnotateView.vue"),
     },
     {
+      path: "/pin",
+      name: "pin",
+      component: () => import("../views/PinView.vue"),
+    },
+    {
       path: "/history",
       name: "history",
       component: () => import("../views/HistoryView.vue"),
@@ -19,11 +24,6 @@ const router = createRouter({
       path: "/settings",
       name: "settings",
       component: () => import("../views/SettingsView.vue"),
-    },
-    {
-      path: "/pin",
-      name: "pin",
-      component: () => import("../views/PinView.vue"),
     },
   ],
 });

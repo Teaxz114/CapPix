@@ -2,138 +2,112 @@
   <div class="history-view">
     <div class="history-header">
       <h2>截图历史</h2>
-      <div class="history-actions">
+      <div class="history-search">
         <input
-          v-model="searchQuery"
-          class="search-input"
-          placeholder="搜索..."
+          v-model="searchText"
+          placeholder="搜索 OCR 文字..."
           @input="onSearch"
+          class="search-input"
         />
-        <button class="btn-danger" @click="clearAll">清空全部</button>
+        <button @click="clearAll" class="btn-danger" v-if="records.length">清空</button>
       </div>
     </div>
-    <div v-if="loading" class="loading">加载中...</div>
-    <div v-else-if="items.length === 0" class="empty">
-      <p>暂无截图历史</p>
-      <p class="hint">按 Ctrl+Shift+A 截图后会自动保存</p>
-    </div>
-    <div v-else class="history-grid">
+    <div class="history-grid" v-if="records.length">
       <div
-        v-for="item in filteredItems"
-        :key="item.id"
+        v-for="rec in records"
+        :key="rec.id"
         class="history-card"
-        @click="openItem(item)"
+        @click="openRecord(rec)"
       >
         <img
-          v-if="item.thumbnail"
-          :src="`data:image/png;base64,${item.thumbnail}`"
-          class="card-thumb"
+          :src="`data:image/jpeg;base64,${rec.thumbnail_base64}`"
+          class="history-thumb"
         />
-        <div class="card-info">
-          <span class="card-date">{{ formatDate(item.created_at) }}</span>
-          <span v-if="item.ocr_text" class="card-ocr-badge">OCR</span>
+        <div class="history-info">
+          <span class="history-time">{{ rec.timestamp }}</span>
+          <span class="history-size">{{ rec.width }}×{{ rec.height }}</span>
+          <button @click.stop="deleteRecord(rec.id)" class="btn-delete">×</button>
         </div>
-        <button class="card-delete" @click.stop="deleteItem(item.id)">×</button>
+        <div v-if="rec.ocr_text" class="history-ocr-preview">
+          {{ rec.ocr_text.slice(0, 80) }}{{ rec.ocr_text.length > 80 ? '...' : '' }}
+        </div>
       </div>
+    </div>
+    <div v-else class="history-empty">
+      <p>暂无截图历史</p>
+      <p class="hint">截图后会自动保存到历史记录</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
-interface HistoryItem {
+interface ScreenshotRecord {
   id: number;
+  timestamp: string;
   image_base64: string;
-  thumbnail: string;
-  created_at: string;
+  thumbnail_base64: string;
   width: number;
   height: number;
   ocr_text: string | null;
 }
 
-const items = ref<HistoryItem[]>([]);
-const loading = ref(true);
-const searchQuery = ref("");
+const records = ref<ScreenshotRecord[]>([]);
+const searchText = ref("");
 
-const filteredItems = computed(() => {
-  if (!searchQuery.value) return items.value;
-  const q = searchQuery.value.toLowerCase();
-  return items.value.filter(
-    (item) =>
-      item.ocr_text?.toLowerCase().includes(q) ||
-      formatDate(item.created_at).includes(q)
-  );
-});
-
-onMounted(async () => {
-  await loadHistory();
-});
+onMounted(() => loadHistory());
 
 async function loadHistory() {
-  loading.value = true;
   try {
-    items.value = await invoke<HistoryItem[]>("get_history", { limit: 100, offset: 0 });
+    records.value = await invoke<ScreenshotRecord[]>("get_history", {
+      limit: 100,
+      offset: 0,
+      search: searchText.value || null,
+    });
   } catch (e) {
     console.error("Failed to load history:", e);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function deleteItem(id: number) {
-  try {
-    await invoke("delete_history_item", { id });
-    items.value = items.value.filter((i) => i.id !== id);
-  } catch (e) {
-    console.error("Failed to delete:", e);
-  }
-}
-
-async function clearAll() {
-  if (!confirm("确定清空全部历史？")) return;
-  try {
-    await invoke("clear_history");
-    items.value = [];
-  } catch (e) {
-    console.error("Failed to clear:", e);
-  }
-}
-
-function openItem(item: HistoryItem) {
-  // TODO: open in annotate view with the image
-  console.log("Open item:", item.id);
-}
-
-function formatDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString("zh-CN", {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return dateStr;
   }
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 function onSearch() {
   if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    // Reactive via computed
-  }, 200);
+  searchTimer = setTimeout(loadHistory, 300);
+}
+
+async function deleteRecord(id: number) {
+  try {
+    await invoke("delete_history_item", { id });
+    records.value = records.value.filter((r) => r.id !== id);
+  } catch (e) {
+    console.error("Failed to delete:", e);
+  }
+}
+
+async function clearAll() {
+  try {
+    await invoke("clear_history");
+    records.value = [];
+  } catch (e) {
+    console.error("Failed to clear:", e);
+  }
+}
+
+function openRecord(rec: ScreenshotRecord) {
+  // Open in annotate window
+  invoke("open_annotate_window", { imageBase64: rec.image_base64 });
 }
 </script>
 
 <style scoped>
 .history-view {
   padding: 24px;
-  max-width: 960px;
+  max-width: 1200px;
   margin: 0 auto;
+  min-height: 100vh;
+  background: #111827;
   color: #e5e7eb;
 }
 
@@ -143,54 +117,41 @@ function onSearch() {
   align-items: center;
   margin-bottom: 20px;
 }
+.history-header h2 { font-size: 20px; font-weight: 600; }
 
-.history-header h2 {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.history-actions {
+.history-search {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
 .search-input {
-  background: #374151;
-  border: 1px solid #4b5563;
-  color: #e5e7eb;
   padding: 6px 12px;
+  background: #1f2937;
+  border: 1px solid #374151;
   border-radius: 6px;
+  color: #e5e7eb;
   font-size: 13px;
-  width: 180px;
-  outline: none;
+  width: 240px;
 }
-.search-input:focus { border-color: #3b82f6; }
+.search-input::placeholder { color: #6b7280; }
+.search-input:focus { outline: none; border-color: #3b82f6; }
 
 .btn-danger {
-  background: #dc2626;
-  color: #fff;
-  border: none;
   padding: 6px 12px;
-  border-radius: 6px;
+  background: #991b1b;
+  color: #fca5a5;
+  border: none;
+  border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
 }
 .btn-danger:hover { background: #b91c1c; }
 
-.loading, .empty {
-  text-align: center;
-  padding: 60px 20px;
-  color: #6b7280;
-}
-
-.hint { font-size: 13px; margin-top: 8px; }
-
 .history-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
 }
 
 .history-card {
@@ -199,53 +160,48 @@ function onSearch() {
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
-  transition: border-color 0.15s;
-  position: relative;
+  transition: border-color 0.2s;
 }
 .history-card:hover { border-color: #3b82f6; }
 
-.card-thumb {
+.history-thumb {
   width: 100%;
-  height: 120px;
+  height: 140px;
   object-fit: cover;
   display: block;
 }
 
-.card-info {
-  padding: 8px 10px;
+.history-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 8px 10px;
 }
+.history-time { font-size: 11px; color: #9ca3af; }
+.history-size { font-size: 11px; color: #6b7280; }
 
-.card-date { font-size: 11px; color: #9ca3af; }
-
-.card-ocr-badge {
-  background: #3b82f6;
-  color: #fff;
-  font-size: 9px;
-  padding: 1px 5px;
-  border-radius: 3px;
-}
-
-.card-delete {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  background: rgba(0,0,0,0.6);
-  color: #9ca3af;
+.btn-delete {
+  background: none;
   border: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  font-size: 14px;
+  color: #6b7280;
+  font-size: 16px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  padding: 0 4px;
 }
-.history-card:hover .card-delete { opacity: 1; }
-.card-delete:hover { color: #ef4444; }
+.btn-delete:hover { color: #f87171; }
+
+.history-ocr-preview {
+  padding: 0 10px 8px;
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.history-empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: #6b7280;
+}
+.history-empty p { margin: 4px 0; }
+.hint { font-size: 13px; }
 </style>

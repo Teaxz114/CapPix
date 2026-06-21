@@ -40,8 +40,8 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush } from "fabric";
 import Toolbar from "../components/Toolbar.vue";
-import CanvasComponent from "../components/Canvas.vue";
 import OcrPanel from "../components/OcrPanel.vue";
+import CanvasComponent from "../components/Canvas.vue";
 
 interface OcrBlock {
   text: string;
