@@ -3,46 +3,27 @@
     <div class="history-header">
       <h2>截图历史</h2>
       <div class="history-actions">
-        <input
-          v-model="searchQuery"
-          placeholder="搜索 OCR 文字..."
-          class="search-input"
-          @input="onSearch"
-        />
-        <button @click="loadHistory" class="refresh-btn">刷新</button>
+        <input v-model="searchQuery" placeholder="搜索 OCR 文字..." class="search-input" @input="onSearch" />
+        <button @click="loadHistory" class="btn-refresh">刷新</button>
+        <button @click="clearAll" class="btn-danger">清空</button>
       </div>
     </div>
-    <div v-if="loading" class="loading">加载中...</div>
-    <div v-else-if="records.length === 0" class="empty">
-      <p>暂无截图历史</p>
-      <p class="hint">截图后会自动保存到历史记录</p>
-    </div>
-    <div v-else class="history-grid">
-      <div
-        v-for="record in records"
-        :key="record.id"
-        class="history-card"
-        @click="openRecord(record)"
-      >
-        <img
-          :src="`data:image/png;base64,${record.image_base64}`"
-          class="thumbnail"
-          loading="lazy"
-        />
-        <div class="card-info">
-          <span class="card-time">{{ record.timestamp }}</span>
-          <span class="card-source">{{ record.source }}</span>
-          <span class="card-size">{{ record.width }}×{{ record.height }}</span>
-          <button class="card-delete" @click.stop="deleteRecord(record.id)">×</button>
+    <div class="history-count">共 {{ totalCount }} 条记录</div>
+    <div class="history-list" v-if="entries.length">
+      <div v-for="entry in entries" :key="entry.id" class="history-item" @click="openEntry(entry)">
+        <img :src="`data:image/png;base64,${entry.image_base64}`" class="history-thumb" />
+        <div class="history-info">
+          <div class="history-meta">
+            <span class="history-source">{{ sourceLabel(entry.source) }}</span>
+            <span class="history-size">{{ entry.width }}×{{ entry.height }}</span>
+            <span class="history-time">{{ entry.timestamp }}</span>
+          </div>
+          <div v-if="entry.ocr_text" class="history-ocr">{{ truncate(entry.ocr_text, 80) }}</div>
         </div>
-        <div v-if="record.ocr_text" class="card-ocr">
-          {{ record.ocr_text.substring(0, 80) }}{{ record.ocr_text.length > 80 ? '...' : '' }}
-        </div>
+        <button class="btn-delete" @click.stop="deleteEntry(entry.id)">×</button>
       </div>
     </div>
-    <div v-if="records.length > 0" class="history-footer">
-      共 {{ totalCount }} 条记录
-    </div>
+    <div v-else class="history-empty">暂无截图记录</div>
   </div>
 </template>
 
@@ -60,69 +41,60 @@ interface ScreenshotRecord {
   ocr_text: string | null;
 }
 
-const records = ref<ScreenshotRecord[]>([]);
-const loading = ref(false);
-const searchQuery = ref("");
+const entries = ref<ScreenshotRecord[]>([]);
 const totalCount = ref(0);
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
+const searchQuery = ref("");
 
-onMounted(() => {
-  loadHistory();
-});
+onMounted(() => { loadHistory(); });
 
 async function loadHistory() {
-  loading.value = true;
   try {
-    records.value = await invoke<ScreenshotRecord[]>("history_list", { limit: 50, offset: 0 });
+    entries.value = await invoke<ScreenshotRecord[]>("history_list", { limit: 50, offset: 0 });
     totalCount.value = await invoke<number>("history_count");
-  } catch (e) {
-    console.error("Failed to load history:", e);
-  } finally {
-    loading.value = false;
-  }
+  } catch (e) { console.error("Failed to load history:", e); }
 }
 
-function onSearch() {
-  if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(async () => {
-    if (!searchQuery.value.trim()) {
-      loadHistory();
-      return;
-    }
-    loading.value = true;
-    try {
-      records.value = await invoke<ScreenshotRecord[]>("history_search", {
-        query: searchQuery.value,
-        limit: 50,
-      });
-    } catch (e) {
-      console.error("Search failed:", e);
-    } finally {
-      loading.value = false;
-    }
-  }, 300);
+async function onSearch() {
+  if (!searchQuery.value.trim()) { loadHistory(); return; }
+  try {
+    entries.value = await invoke<ScreenshotRecord[]>("history_search", { query: searchQuery.value, limit: 50 });
+  } catch (e) { console.error("Search failed:", e); }
 }
 
-async function deleteRecord(id: number) {
+async function deleteEntry(id: number) {
   try {
     await invoke("history_delete", { id });
-    records.value = records.value.filter(r => r.id !== id);
-    totalCount.value--;
-  } catch (e) {
-    console.error("Delete failed:", e);
-  }
+    loadHistory();
+  } catch (e) { console.error("Delete failed:", e); }
 }
 
-function openRecord(record: ScreenshotRecord) {
+async function clearAll() {
+  if (!confirm("确定清空所有历史记录？")) return;
+  try {
+    await invoke("history_clear");
+    loadHistory();
+  } catch (e) { console.error("Clear failed:", e); }
+}
+
+function openEntry(entry: ScreenshotRecord) {
   // Open in annotate window
-  invoke("open_annotate_window", { imageBase64: record.image_base64 });
+  invoke("open_annotate_window", { imageBase64: entry.image_base64 });
+}
+
+function sourceLabel(s: string) {
+  const map: Record<string, string> = { region: "区域", fullscreen: "全屏", window: "窗口" };
+  return map[s] || s;
+}
+
+function truncate(s: string, n: number) {
+  return s.length > n ? s.slice(0, n) + "..." : s;
 }
 </script>
 
 <style scoped>
 .history-view {
-  padding: 24px;
-  max-width: 1200px;
+  padding: 20px;
+  max-width: 800px;
   margin: 0 auto;
   color: #e5e7eb;
 }
@@ -130,17 +102,10 @@ function openRecord(record: ScreenshotRecord) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
-.history-header h2 {
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0;
-}
-.history-actions {
-  display: flex;
-  gap: 8px;
-}
+.history-header h2 { font-size: 18px; margin: 0; }
+.history-actions { display: flex; gap: 8px; align-items: center; }
 .search-input {
   background: #374151;
   border: 1px solid #4b5563;
@@ -151,75 +116,50 @@ function openRecord(record: ScreenshotRecord) {
   width: 200px;
 }
 .search-input::placeholder { color: #6b7280; }
-.refresh-btn {
+.btn-refresh, .btn-danger {
   background: #374151;
   color: #e5e7eb;
   border: none;
-  padding: 6px 16px;
+  padding: 6px 14px;
   border-radius: 6px;
+  font-size: 12px;
   cursor: pointer;
-  font-size: 13px;
 }
-.refresh-btn:hover { background: #4b5563; }
-.loading, .empty {
-  text-align: center;
-  padding: 60px 20px;
-  color: #6b7280;
-}
-.empty .hint { font-size: 13px; margin-top: 8px; }
-.history-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
-}
-.history-card {
+.btn-danger { background: #7f1d1d; }
+.btn-danger:hover { background: #991b1b; }
+.history-count { color: #6b7280; font-size: 12px; margin-bottom: 12px; }
+.history-list { display: flex; flex-direction: column; gap: 8px; }
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   background: #1f2937;
   border: 1px solid #374151;
   border-radius: 8px;
-  overflow: hidden;
+  padding: 10px;
   cursor: pointer;
-  transition: border-color 0.2s;
+  transition: background 0.15s;
 }
-.history-card:hover { border-color: #3b82f6; }
-.thumbnail {
-  width: 100%;
-  height: 140px;
+.history-item:hover { background: #374151; }
+.history-thumb {
+  width: 80px;
+  height: 60px;
   object-fit: cover;
-  display: block;
+  border-radius: 4px;
+  background: #111827;
 }
-.card-info {
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: #9ca3af;
-}
-.card-time { flex: 1; }
-.card-source {
-  background: #374151;
-  padding: 1px 6px;
-  border-radius: 3px;
-}
-.card-delete {
+.history-info { flex: 1; min-width: 0; }
+.history-meta { display: flex; gap: 8px; font-size: 11px; color: #6b7280; margin-bottom: 4px; }
+.history-source { background: #374151; padding: 1px 6px; border-radius: 3px; }
+.history-ocr { font-size: 12px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-delete {
   background: none;
   border: none;
   color: #6b7280;
+  font-size: 18px;
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 2px;
+  padding: 4px 8px;
 }
-.card-delete:hover { color: #f87171; }
-.card-ocr {
-  padding: 0 12px 8px;
-  font-size: 11px;
-  color: #6b7280;
-  line-height: 1.4;
-}
-.history-footer {
-  text-align: center;
-  padding: 16px;
-  color: #6b7280;
-  font-size: 12px;
-}
+.btn-delete:hover { color: #ef4444; }
+.history-empty { text-align: center; color: #6b7280; padding: 40px; }
 </style>

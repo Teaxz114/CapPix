@@ -1,9 +1,7 @@
-use crate::history::HistoryDb;
-use crate::history::ScreenshotRecord;
+use crate::history::{HistoryDb, ScreenshotRecord};
 use std::sync::Mutex;
 use tauri::Manager;
 
-// Global DB state — initialized once in setup
 pub struct HistoryState {
     pub db: Mutex<HistoryDb>,
 }
@@ -27,7 +25,7 @@ pub fn history_save(
         source,
         ocr_text,
     };
-    db.insert(&record)
+    db.insert(&record).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -37,7 +35,7 @@ pub fn history_list(
     offset: Option<i64>,
 ) -> Result<Vec<ScreenshotRecord>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.list(limit.unwrap_or(50), offset.unwrap_or(0))
+    db.list(limit.unwrap_or(50), offset.unwrap_or(0)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -47,17 +45,17 @@ pub fn history_search(
     limit: Option<i64>,
 ) -> Result<Vec<ScreenshotRecord>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.search(&query, limit.unwrap_or(50))
+    db.search(&query, limit.unwrap_or(50)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn history_delete(state: tauri::State<HistoryState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.delete(id)
+    db.delete(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn history_count(state: tauri::State<HistoryState>) -> Result<i64, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.count()
+    db.count().map_err(|e| e.to_string())
 }

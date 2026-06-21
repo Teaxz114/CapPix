@@ -8,7 +8,6 @@ mod recording;
 mod tray;
 
 use commands::history::HistoryState;
-use recording::RecordingManager;
 use tauri::{Emitter, Listener, Manager};
 
 pub fn run() {
@@ -29,7 +28,7 @@ pub fn run() {
             });
 
             // Initialize recording manager
-            app.manage(RecordingManager::new());
+            app.manage(recording::RecordingManager::new());
 
             // Listen for hotkey events
             let app_handle = app.handle().clone();

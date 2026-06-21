@@ -1,40 +1,34 @@
 <template>
-  <div class="ocr-panel" :class="{ open: visible }">
+  <div class="ocr-panel" v-if="visible">
     <div class="ocr-header">
       <span class="ocr-title">OCR 识别结果</span>
-      <button class="ocr-close" @click="$emit('close')">×</button>
+      <button class="ocr-close" @click="close">×</button>
     </div>
     <div v-if="loading" class="ocr-loading">
       <span class="spinner"></span> 识别中...
     </div>
-    <div v-else-if="error" class="ocr-error">{{ error }}</div>
-    <div v-else-if="result" class="ocr-content">
+    <div v-else-if="error" class="ocr-error">
+      {{ error }}
+    </div>
+    <div v-else class="ocr-content">
       <div class="ocr-toolbar">
         <button @click="copyAll" title="复制全部">复制全部</button>
-        <button @click="copyText" title="复制纯文本">复制文本</button>
+        <button @click="copyBlocks" title="复制分块">分块复制</button>
       </div>
-      <div class="ocr-text">
-        <div
-          v-for="(block, i) in result.blocks"
-          :key="i"
-          class="ocr-block"
-          @click="selectedBlock = selectedBlock === i ? -1 : i"
-          :class="{ selected: selectedBlock === i }"
-        >
+      <div class="ocr-text">{{ result?.text || "无识别结果" }}</div>
+      <div v-if="result?.blocks?.length" class="ocr-blocks">
+        <div v-for="(block, i) in result.blocks" :key="i" class="ocr-block" @click="copyText(block.text)">
           <span class="block-index">{{ i + 1 }}</span>
           <span class="block-text">{{ block.text }}</span>
-          <span class="block-confidence">{{ (block.confidence * 100).toFixed(0) }}%</span>
+          <span class="block-conf">{{ (block.confidence * 100).toFixed(0) }}%</span>
         </div>
-      </div>
-      <div v-if="result.blocks.length" class="ocr-stats">
-        {{ result.blocks.length }} 个文本块 · 耗时 {{ result.elapsed?.toFixed(0) || '?' }}ms
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
 interface OcrBlock {
@@ -46,85 +40,83 @@ interface OcrBlock {
 interface OcrResult {
   text: string;
   blocks: OcrBlock[];
-  elapsed: number | null;
+  elapsed?: number;
   error?: string;
 }
 
-const props = defineProps<{
-  visible: boolean;
-  result: OcrResult | null;
-  loading: boolean;
-  error: string;
-}>();
+const visible = ref(false);
+const loading = ref(false);
+const error = ref("");
+const result = ref<OcrResult | null>(null);
 
-defineEmits<{
-  close: [];
-}>();
-
-const selectedBlock = ref(-1);
-
-const fullText = computed(() => props.result?.blocks.map(b => b.text).join("\n") || "");
-
-async function copyAll() {
+async function recognize(imageBase64: string) {
+  visible.value = true;
+  loading.value = true;
+  error.value = "";
+  result.value = null;
   try {
-    await navigator.clipboard.writeText(fullText.value);
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = fullText.value;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-  }
-}
-
-async function copyText() {
-  await copyAll();
-}
-
-// Also expose imperative runOcr for direct use
-async function runOcr(imageBase64: string): Promise<OcrResult | null> {
-  try {
-    return await invoke<OcrResult>("ocr_image", { imageBase64 });
+    result.value = await invoke<OcrResult>("ocr_image", { imageBase64 });
+    if (result.value?.error) {
+      error.value = result.value.error;
+    }
   } catch (e) {
-    console.error("OCR failed:", e);
-    return null;
+    error.value = String(e);
+  } finally {
+    loading.value = false;
   }
 }
 
-defineExpose({ runOcr });
+function close() {
+  visible.value = false;
+}
+
+function copyText(text: string) {
+  navigator.clipboard.writeText(text);
+}
+
+function copyAll() {
+  if (result.value?.text) {
+    navigator.clipboard.writeText(result.value.text);
+  }
+}
+
+function copyBlocks() {
+  if (result.value?.blocks) {
+    const text = result.value.blocks.map((b, i) => `${i + 1}. ${b.text}`).join("\n");
+    navigator.clipboard.writeText(text);
+  }
+}
+
+defineExpose({ recognize, visible });
 </script>
 
 <style scoped>
 .ocr-panel {
   position: fixed;
-  right: -400px;
+  right: 16px;
   top: 60px;
-  width: 380px;
-  max-height: calc(100vh - 120px);
+  width: 360px;
+  max-height: 80vh;
   background: #1f2937;
   border: 1px solid #374151;
   border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
   z-index: 1000;
-  transition: right 0.3s ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-.ocr-panel.open {
-  right: 16px;
 }
 .ocr-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid #374151;
+  background: #111827;
 }
 .ocr-title {
   color: #e5e7eb;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 .ocr-close {
@@ -135,7 +127,7 @@ defineExpose({ runOcr });
   cursor: pointer;
   padding: 0 4px;
 }
-.ocr-close:hover { color: #f87171; }
+.ocr-close:hover { color: #ef4444; }
 .ocr-loading {
   padding: 24px;
   text-align: center;
@@ -156,19 +148,18 @@ defineExpose({ runOcr });
 @keyframes spin { to { transform: rotate(360deg); } }
 .ocr-error {
   padding: 16px;
-  color: #f87171;
+  color: #ef4444;
   font-size: 13px;
 }
 .ocr-content {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
 }
 .ocr-toolbar {
   display: flex;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 8px 14px;
   border-bottom: 1px solid #374151;
 }
 .ocr-toolbar button {
@@ -182,37 +173,39 @@ defineExpose({ runOcr });
 }
 .ocr-toolbar button:hover { background: #4b5563; }
 .ocr-text {
-  flex: 1;
+  padding: 12px 14px;
+  color: #e5e7eb;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 200px;
   overflow-y: auto;
-  padding: 8px;
+  border-bottom: 1px solid #374151;
+}
+.ocr-blocks {
+  padding: 8px 0;
 }
 .ocr-block {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: 6px 14px;
   cursor: pointer;
-  font-size: 13px;
-  color: #d1d5db;
+  transition: background 0.15s;
 }
 .ocr-block:hover { background: #374151; }
-.ocr-block.selected { background: #1e3a5f; border: 1px solid #3b82f6; }
 .block-index {
   color: #6b7280;
   font-size: 11px;
   min-width: 20px;
 }
-.block-text { flex: 1; word-break: break-all; }
-.block-confidence {
-  color: #6b7280;
-  font-size: 11px;
+.block-text {
+  flex: 1;
+  color: #d1d5db;
+  font-size: 12px;
 }
-.ocr-stats {
-  padding: 8px 16px;
-  border-top: 1px solid #374151;
+.block-conf {
   color: #6b7280;
-  font-size: 11px;
-  text-align: center;
+  font-size: 10px;
 }
 </style>
