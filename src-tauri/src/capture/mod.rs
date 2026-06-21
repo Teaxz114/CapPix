@@ -23,6 +23,7 @@ pub struct WindowInfo {
     pub width: i32,
     pub height: i32,
     pub is_visible: bool,
+    pub process_id: u32,
 }
 
 #[derive(Debug, Serialize, Clone)]

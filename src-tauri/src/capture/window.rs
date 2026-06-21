@@ -1,8 +1,10 @@
 use super::WindowInfo;
 use anyhow::Result;
+use std::ptr::null_mut;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextW, IsWindowVisible,
+    EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    IsWindowVisible,
 };
 
 pub fn get_window_list() -> Result<Vec<WindowInfo>> {
@@ -15,7 +17,17 @@ pub fn get_window_list() -> Result<Vec<WindowInfo>> {
         )?;
     }
 
-    windows.retain(|w| w.is_visible && !w.title.is_empty());
+    // Filter: only visible windows with non-empty titles, reasonable size
+    windows.retain(|w| {
+        w.is_visible
+            && !w.title.is_empty()
+            && w.width > 0
+            && w.height > 0
+            // Exclude windows with zero-size or off-screen
+            && w.width < 10000
+            && w.height < 10000
+    });
+
     Ok(windows)
 }
 
@@ -35,6 +47,12 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     let mut rect = RECT::default();
     let _ = GetWindowRect(hwnd, &mut rect);
 
+    // Get process ID
+    let mut process_id: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    }
+
     windows.push(WindowInfo {
         hwnd: hwnd.0 as u64,
         title,
@@ -44,6 +62,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
         width: rect.right - rect.left,
         height: rect.bottom - rect.top,
         is_visible,
+        process_id,
     });
 
     BOOL(1)
