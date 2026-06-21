@@ -1,11 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use tauri::Manager;
-use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::DataExchange::*;
-use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
-use windows::Win32::System::Ole::CF_DIB;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String> {
@@ -15,6 +10,12 @@ pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String>
     let (width, height) = rgba.dimensions();
 
     unsafe {
+        use windows::Win32::Graphics::Gdi::*;
+        use windows::Win32::System::DataExchange::*;
+        use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+        use windows::Win32::System::Ole::CF_DIB;
+        use windows::Win32::Foundation::HANDLE;
+
         OpenClipboard(None).map_err(|e| format!("Failed to open clipboard: {}", e))?;
         let _ = EmptyClipboard();
 
@@ -118,6 +119,38 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     .resizable(false)
     .build()
     .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Result<(), String> {
+    use tauri::WebviewWindowBuilder;
+
+    // Close existing annotate window if any
+    if let Some(existing) = app.get_webview_window("annotate") {
+        let _ = existing.close();
+    }
+
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "annotate",
+        tauri::WebviewUrl::App("/annotate".into()),
+    )
+    .title("CapPix - 标注编辑")
+    .decorations(true)
+    .always_on_top(false)
+    .inner_size(1200.0, 800.0)
+    .center()
+    .resizable(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    // Emit the image data to the annotate window
+    let _ = app.emit("annotate-image", image_base64);
+
+    // Focus the window
+    let _ = window.set_focus();
 
     Ok(())
 }
