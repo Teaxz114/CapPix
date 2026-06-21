@@ -5,6 +5,7 @@
     @mousedown="onMouseDown"
     @mousemove="onMouseMove"
     @mouseup="onMouseUp"
+    @contextmenu.prevent="onContextMenu"
     @dblclick="onDoubleClick"
   >
     <!-- Screenshot background image -->
@@ -37,9 +38,9 @@
       />
     </svg>
 
-    <!-- Window highlight (shown on hover when not selecting) -->
+    <!-- Window detection highlight -->
     <div
-      v-if="windowHighlight && !isSelecting && !hasSelection"
+      v-if="windowHighlight && !isSelecting"
       class="window-highlight"
       :style="{
         left: windowHighlight.x + 'px',
@@ -48,10 +49,17 @@
         height: windowHighlight.height + 'px',
       }"
     >
-      <div class="window-highlight-border"></div>
-      <div class="window-highlight-label" v-if="windowHighlight.title">
-        {{ windowHighlight.title }}
-      </div>
+      <span class="window-highlight-title">{{ windowHighlight.title }}</span>
+    </div>
+
+    <!-- Context menu -->
+    <div v-if="contextMenu" class="context-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
+      <button @click="captureRegion">截取选区</button>
+      <button @click="captureFullscreen">截取全屏</button>
+      <button @click="pickColor">取色</button>
+      <button @click="ocrRegion">OCR 识别</button>
+      <hr />
+      <button @click="cancelCapture">取消 (ESC)</button>
     </div>
 
     <!-- Selection border -->
@@ -145,8 +153,8 @@ interface WindowRegion {
 }
 
 const windowHighlight = ref<WindowRegion | null>(null);
-let windowDetectTimer: ReturnType<typeof setTimeout> | null = null;
-const WINDOW_DETECT_DEBOUNCE = 100; // ms
+let detectTimer: ReturnType<typeof setTimeout> | null = null;
+const contextMenu = ref<{ x: number; y: number } | null>(null);
 
 // Virtual screen offset (for multi-monitor support)
 // The overlay is positioned at (0,0) of the virtual screen,
@@ -285,6 +293,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return;
+  contextMenu.value = null; // Close context menu on left click
 
   // If clicking on a window highlight (no drag), capture that window directly
   // We'll detect this on mouseUp if the mouse didn't move significantly
@@ -447,6 +456,39 @@ function updateMagnifier(x: number, y: number) {
     pixelColor.value = "";
   }
 }
+function onContextMenu(e: MouseEvent) {
+  contextMenu.value = { x: e.clientX, y: e.clientY };
+}
+
+function captureRegion() {
+  contextMenu.value = null;
+  // If there's a selection, use it; otherwise prompt drag selection
+}
+
+function captureFullscreen() {
+  contextMenu.value = null;
+  if (screenshotData.value) {
+    invoke("open_annotate_window", { imageBase64: screenshotData.value });
+    getCurrentWindow().close();
+  }
+}
+
+function pickColor() {
+  contextMenu.value = null;
+  // Color picker mode — already handled by mousemove
+}
+
+function ocrRegion() {
+  contextMenu.value = null;
+  if (screenshotData.value) {
+    invoke("ocr_image", { imageBase64: screenshotData.value });
+  }
+}
+
+function cancelCapture() {
+  contextMenu.value = null;
+  getCurrentWindow().close();
+}
 </script>
 
 <style scoped>
@@ -496,21 +538,43 @@ function updateMagnifier(x: number, y: number) {
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3), inset 0 0 0 1px rgba(59, 130, 246, 0.1);
 }
 
-.window-highlight-label {
+.window-highlight-title {
   position: absolute;
   top: -24px;
   left: 0;
-  background: rgba(59, 130, 246, 0.9);
-  color: white;
+  background: #1f2937;
+  color: #e5e7eb;
   padding: 2px 8px;
-  border-radius: 3px 3px 0 0;
+  border-radius: 4px;
   font-size: 11px;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  white-space: nowrap;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
+.context-menu {
+  position: fixed;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 100;
+  min-width: 120px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.context-menu button {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #e5e7eb;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.context-menu button:hover { background: #374151; }
+.context-menu hr { border: none; border-top: 1px solid #374151; margin: 4px 0; }
 
 .selection-border {
   position: fixed;
