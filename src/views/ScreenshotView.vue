@@ -372,12 +372,16 @@ function onMouseUp(e: MouseEvent) {
 }
 
 async function onDoubleClick() {
-  // Full screen capture
-  try {
-    const result = await invoke<{ image_base64: string; width: number; height: number }>("capture_fullscreen");
-    navigateToAnnotate(result.image_base64);
-  } catch (err) {
-    console.error("Failed to capture fullscreen:", err);
+  // Full screen capture — use the screenshot data we already have
+  if (screenshotData.value) {
+    await navigateToAnnotate(screenshotData.value);
+  } else {
+    try {
+      const result = await invoke<{ image_base64: string; width: number; height: number }>("capture_fullscreen");
+      await navigateToAnnotate(result.image_base64);
+    } catch (err) {
+      console.error("Failed to capture fullscreen:", err);
+    }
   }
 }
 
@@ -389,17 +393,24 @@ async function captureRegion(x: number, y: number, w: number, h: number) {
       width: w,
       height: h,
     });
-    navigateToAnnotate(result.image_base64);
+    await navigateToAnnotate(result.image_base64);
   } catch (err) {
     console.error("Failed to capture region:", err);
   }
 }
 
-function navigateToAnnotate(imageBase64: string) {
-  // Store the image data and navigate to annotate view
-  // Use sessionStorage to pass data between views
-  sessionStorage.setItem("cappix-annotate-image", imageBase64);
-  router.push("/annotate");
+async function navigateToAnnotate(imageBase64: string) {
+  // Open a new annotate window via Tauri command (passes image data)
+  // then close this screenshot overlay window
+  try {
+    await invoke("open_annotate_window", { imageBase64 });
+  } catch (e) {
+    console.error("Failed to open annotate window:", e);
+    // Fallback: save to session storage and try main window
+    sessionStorage.setItem("cappix-annotate-image", imageBase64);
+  }
+  // Close the screenshot overlay
+  await getCurrentWindow().close();
 }
 
 function updateMagnifier(x: number, y: number) {
@@ -478,8 +489,7 @@ function captureRegionFromMenu() {
 function captureFullscreen() {
   contextMenu.value = null;
   if (screenshotData.value) {
-    invoke("open_annotate_window", { imageBase64: screenshotData.value });
-    getCurrentWindow().close();
+    navigateToAnnotate(screenshotData.value);
   }
 }
 

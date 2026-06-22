@@ -146,11 +146,15 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     .build()
     .map_err(|e| e.to_string())?;
 
-    // Emit the image data to the annotate window
-    let _ = app.emit("annotate-image", image_base64);
-
     // Focus the window
     let _ = window.set_focus();
+
+    // Delay emit to allow the frontend to mount and register the event listener
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = app_clone.emit("annotate-image", image_base64);
+    });
 
     Ok(())
 }

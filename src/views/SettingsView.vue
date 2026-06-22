@@ -90,18 +90,18 @@
       <!-- Hotkey display -->
       <section class="settings-section">
         <h3>快捷键</h3>
-        <div class="setting-row">
-          <label>区域截图</label>
-          <kbd>{{ config.hotkeyCaptureRegion }}</kbd>
+        <div class="setting-row" v-for="hk in hotkeys" :key="hk.key">
+          <label>{{ hk.label }}</label>
+          <input
+            class="hotkey-input"
+            :value="config[hk.key as keyof typeof config]"
+            @keydown="onHotkeyKeydown($event, hk.key)"
+            readonly
+            placeholder="点击后按键设置"
+          />
+          <button class="btn-reset-hotkey" @click="resetHotkey(hk.key)" title="恢复默认">↺</button>
         </div>
-        <div class="setting-row">
-          <label>全屏截图</label>
-          <kbd>{{ config.hotkeyCaptureFullscreen }}</kbd>
-        </div>
-        <div class="setting-row">
-          <label>窗口截图</label>
-          <kbd>{{ config.hotkeyCaptureWindow }}</kbd>
-        </div>
+        <p class="hotkey-hint">点击输入框，按下新快捷键即可修改（重启后生效）</p>
       </section>
 
       <!-- Actions -->
@@ -121,6 +121,48 @@ import { storeToRefs } from "pinia";
 
 const configStore = useConfigStore();
 const { config } = storeToRefs(configStore);
+
+const hotkeys = [
+  { key: "hotkeyCaptureRegion", label: "区域截图" },
+  { key: "hotkeyCaptureFullscreen", label: "全屏截图" },
+  { key: "hotkeyCaptureWindow", label: "窗口截图" },
+];
+
+const defaultHotkeys: Record<string, string> = {
+  hotkeyCaptureRegion: "Ctrl+Shift+A",
+  hotkeyCaptureFullscreen: "Ctrl+Shift+S",
+  hotkeyCaptureWindow: "Ctrl+Shift+Q",
+};
+
+function onHotkeyKeydown(e: KeyboardEvent, key: string) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  // Build shortcut string from key event
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+
+  // Ignore standalone modifier presses
+  const modKeys = ["Control", "Alt", "Shift", "Meta"];
+  if (modKeys.includes(e.key)) return;
+
+  // Map key name
+  let keyName = e.key;
+  if (keyName === " ") keyName = "Space";
+  if (keyName.length === 1) keyName = keyName.toUpperCase();
+  parts.push(keyName);
+
+  const shortcut = parts.join("+");
+
+  // Update config
+  (config.value as any)[key] = shortcut;
+}
+
+function resetHotkey(key: string) {
+  (config.value as any)[key] = defaultHotkeys[key];
+}
 
 function resetConfig() {
   if (confirm("确定恢复默认设置？")) {
@@ -202,4 +244,34 @@ kbd {
   cursor: pointer;
 }
 .btn-danger:hover { background: #991b1b; }
+.hotkey-input {
+  background: #374151;
+  color: #e5e7eb;
+  border: 1px solid #4b5563;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  min-width: 120px;
+}
+.hotkey-input:focus {
+  border-color: #3b82f6;
+  outline: none;
+}
+.btn-reset-hotkey {
+  background: none;
+  border: 1px solid #4b5563;
+  color: #9ca3af;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn-reset-hotkey:hover { color: #e5e7eb; border-color: #9ca3af; }
+.hotkey-hint {
+  color: #6b7280;
+  font-size: 11px;
+  margin: 4px 0 0;
+}
 </style>
