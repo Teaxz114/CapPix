@@ -1,6 +1,16 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
+
+/// Pending screenshot data for the overlay window to pick up
+pub struct PendingScreenshot(pub Mutex<Option<String>>);
+
+#[tauri::command]
+pub fn get_pending_screenshot(state: tauri::State<PendingScreenshot>) -> Result<Option<String>, String> {
+    let mut data = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(data.take())
+}
 
 #[tauri::command]
 pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String> {
@@ -104,7 +114,7 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
         let _ = existing.close();
     }
 
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
         tauri::WebviewUrl::App("/#/screenshot".into()),
@@ -120,9 +130,7 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     // Focus the overlay so keyboard events (ESC) work
-    if let Some(overlay) = app.get_webview_window("screenshot-overlay") {
-        let _ = overlay.set_focus();
-    }
+    let _ = window.set_focus();
 
     Ok(())
 }

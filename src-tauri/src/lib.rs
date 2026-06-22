@@ -8,6 +8,7 @@ mod recording;
 mod tray;
 
 use commands::history::HistoryState;
+use std::sync::Mutex;
 use tauri::{Emitter, Listener, Manager};
 
 pub fn run() {
@@ -30,6 +31,9 @@ pub fn run() {
 
             // Initialize recording manager
             app.manage(recording::RecordingManager::new());
+
+            // Initialize pending screenshot store
+            app.manage(commands::clipboard::PendingScreenshot(Mutex::new(None)));
 
             // Restore pinned windows from database
             {
@@ -78,13 +82,16 @@ pub fn run() {
                     tauri::async_runtime::spawn(async move {
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
+                                // Store screenshot data for overlay to pick up
+                                if let Some(state) = app.try_state::<commands::clipboard::PendingScreenshot>() {
+                                    if let Ok(mut data) = state.0.lock() {
+                                        *data = Some(result.image_base64.clone());
+                                    }
+                                }
                                 if let Err(e) = commands::clipboard::open_screenshot_overlay(app.clone()) {
                                     log::error!("Failed to open overlay: {}", e);
                                     return;
                                 }
-                                // Wait for overlay window to load and register its event listener
-                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                let _ = app.emit("screenshot-ready", result.image_base64);
                             }
                             Err(e) => log::error!("Capture failed: {}", e),
                         }
@@ -106,13 +113,16 @@ pub fn run() {
                     tauri::async_runtime::spawn(async move {
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
+                                // Store screenshot data for overlay to pick up
+                                if let Some(state) = app.try_state::<commands::clipboard::PendingScreenshot>() {
+                                    if let Ok(mut data) = state.0.lock() {
+                                        *data = Some(result.image_base64.clone());
+                                    }
+                                }
                                 if let Err(e) = commands::clipboard::open_screenshot_overlay(app.clone()) {
                                     log::error!("Failed to open overlay: {}", e);
                                     return;
                                 }
-                                // Wait for overlay window to load and register its event listener
-                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                let _ = app.emit("screenshot-ready", result.image_base64);
                             }
                             Err(e) => log::error!("Capture failed: {}", e),
                         }
@@ -133,6 +143,7 @@ pub fn run() {
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::open_screenshot_overlay,
             commands::clipboard::open_annotate_window,
+            commands::clipboard::get_pending_screenshot,
             commands::save::save_image_to_file,
             commands::color::pick_color_at_point,
             commands::history::history_save,

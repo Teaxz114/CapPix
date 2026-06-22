@@ -265,6 +265,17 @@ function detectWindowAtCursor(clientX: number, clientY: number) {
 let unlisten: (() => void) | null = null;
 
 onMounted(async () => {
+  // Try to get pending screenshot data via invoke (reliable, no timing issues)
+  try {
+    const pending = await invoke<string | null>("get_pending_screenshot");
+    if (pending) {
+      screenshotData.value = pending;
+    }
+  } catch (e) {
+    console.error("Failed to get pending screenshot:", e);
+  }
+
+  // Also listen for screenshot-ready event as fallback
   try {
     unlisten = await listen<string>("screenshot-ready", (event) => {
       screenshotData.value = event.payload;
