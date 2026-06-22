@@ -2,11 +2,13 @@
   <div
     class="screenshot-overlay"
     ref="overlayRef"
+    tabindex="0"
     @mousedown="onMouseDown"
     @mousemove="onMouseMove"
     @mouseup="onMouseUp"
     @contextmenu.prevent="onContextMenu"
     @dblclick="onDoubleClick"
+    @keydown="onKeyDown"
   >
     <!-- Screenshot background image -->
     <img
@@ -147,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -308,13 +310,30 @@ onMounted(async () => {
 
   await fetchVirtualScreenOffset();
 
+  // Use both window and document for keyboard events
+  // Also add a click handler to ensure focus
+  document.addEventListener("keydown", onKeyDown);
   window.addEventListener("keydown", onKeyDown);
+
+  // Ensure focus — try multiple times with delay
   try { await getCurrentWindow().setFocus(); } catch (_) {}
+  nextTick(() => {
+    overlayRef.value?.focus();
+  });
+  setTimeout(async () => {
+    try { await getCurrentWindow().setFocus(); } catch (_) {}
+    overlayRef.value?.focus();
+  }, 100);
+  setTimeout(async () => {
+    try { await getCurrentWindow().setFocus(); } catch (_) {}
+    overlayRef.value?.focus();
+  }, 300);
 });
 
 onUnmounted(() => {
   if (unlisten) unlisten();
   if (windowDetectTimer) clearTimeout(windowDetectTimer);
+  document.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("keydown", onKeyDown);
 });
 
@@ -338,7 +357,21 @@ function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return;
   contextMenu.value = null;
 
-  // If clicking outside current selection, start new selection
+  // If we have a selection with toolbar showing, don't start new selection
+  // unless clicking outside the current selection area
+  if (hasSelection.value) {
+    const sx = selectionX.value;
+    const sy = selectionY.value;
+    const sw = selectionW.value;
+    const sh = selectionH.value;
+    const insideSelection =
+      e.clientX >= sx && e.clientX <= sx + sw &&
+      e.clientY >= sy && e.clientY <= sy + sh;
+    if (insideSelection) {
+      return; // Don't reset selection when clicking inside it
+    }
+  }
+
   isSelecting.value = true;
   hasSelection.value = false;
   capturedBase64 = "";
@@ -465,6 +498,7 @@ async function actionCopy() {
     await invoke("copy_image_to_clipboard", { imageBase64: capturedBase64 });
   } catch (e) {
     console.error("Copy failed:", e);
+    return;
   }
   await getCurrentWindow().close();
 }
@@ -475,6 +509,7 @@ async function actionPin() {
     await invoke("create_pin_window", { imageBase64: capturedBase64 });
   } catch (e) {
     console.error("Pin failed:", e);
+    return;
   }
   await getCurrentWindow().close();
 }
@@ -483,12 +518,12 @@ async function actionOcr() {
   if (!capturedBase64) return;
   try {
     const result = await invoke("ocr_image", { imageBase64: capturedBase64 });
-    // Copy OCR text to clipboard
     if (result && typeof result === "object" && "text" in result) {
       await navigator.clipboard.writeText((result as any).text);
     }
   } catch (e) {
     console.error("OCR failed:", e);
+    return;
   }
   await getCurrentWindow().close();
 }
@@ -496,11 +531,11 @@ async function actionOcr() {
 async function actionSave() {
   if (!capturedBase64) return;
   try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filename = `CapPix_${timestamp}.png`;
-    await invoke("save_image_to_file", { imageBase64: capturedBase64, filename });
+    await invoke("save_image_to_file", { imageBase64: capturedBase64 });
   } catch (e) {
+    // User cancelled save dialog or error — don't close overlay
     console.error("Save failed:", e);
+    return;
   }
   await getCurrentWindow().close();
 }
