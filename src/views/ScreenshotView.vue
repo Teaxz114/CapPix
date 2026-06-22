@@ -409,16 +409,32 @@ function onMouseUp(e: MouseEvent) {
 }
 
 async function doCaptureRegion(x: number, y: number, w: number, h: number, autoNavigate: boolean) {
+  // IMPORTANT: Don't re-capture the screen! The overlay is on screen,
+  // so capture_region would include the overlay UI. Instead, crop from
+  // the original full-screen screenshot data we already have.
+  if (!screenshotData.value) {
+    console.error("No screenshot data available for cropping");
+    return;
+  }
   try {
-    const result = await invoke<{ image_base64: string; width: number; height: number }>("capture_region", {
-      x, y, width: w, height: h,
+    // Convert overlay-local logical pixels to screenshot image pixels
+    // The screenshot image may be larger than the overlay window due to DPI scaling
+    const scaleX = screenshotImage.value ? screenshotImage.value.naturalWidth / window.innerWidth : 1;
+    const scaleY = screenshotImage.value ? screenshotImage.value.naturalHeight / window.innerHeight : 1;
+
+    const result = await invoke<{ image_base64: string }>("crop_image", {
+      imageBase64: screenshotData.value,
+      x: Math.round(x * scaleX),
+      y: Math.round(y * scaleY),
+      width: Math.round(w * scaleX),
+      height: Math.round(h * scaleY),
     });
     capturedBase64 = result.image_base64;
     if (autoNavigate) {
       await navigateToAnnotate(capturedBase64);
     }
   } catch (err) {
-    console.error("Failed to capture region:", err);
+    console.error("Failed to crop region:", err);
   }
 }
 
@@ -542,6 +558,15 @@ function captureRegionFromMenu() {
       selectionY.value + virtualScreenOffsetY,
       selectionW.value,
       selectionH.value,
+      true
+    );
+  } else if (windowHighlight.value) {
+    const win = windowHighlight.value;
+    doCaptureRegion(
+      win.x + virtualScreenOffsetX,
+      win.y + virtualScreenOffsetY,
+      win.width,
+      win.height,
       true
     );
   }
