@@ -531,6 +531,9 @@ async function actionOcr() {
 async function actionSave() {
   if (!capturedBase64) return;
   try {
+    // Lower the overlay window so save dialog is visible on top
+    const win = getCurrentWindow();
+    await win.setAlwaysOnTop(false);
     await invoke("save_image_to_file", { imageBase64: capturedBase64 });
   } catch (e) {
     // User cancelled save dialog or error — don't close overlay
