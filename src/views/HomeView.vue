@@ -62,10 +62,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import RecordingBar from "../components/RecordingBar.vue";
 
 interface HotkeyInfo {
@@ -96,6 +96,16 @@ onMounted(async () => {
   } catch (e) {
     console.error("Failed to load hotkeys:", e);
     hotkeys.value = captureTools.map(t => ({ id: t.id, name: t.name, shortcut: t.shortcut }));
+  }
+
+  // Listen for tray-action events from the system tray menu
+  try {
+    const unlisten = await listen<string>("tray-action", (event) => {
+      handleAction(event.payload);
+    });
+    onUnmounted(() => { unlisten(); });
+  } catch (e) {
+    console.error("Failed to listen for tray-action:", e);
   }
 });
 

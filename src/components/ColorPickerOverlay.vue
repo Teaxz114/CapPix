@@ -10,6 +10,16 @@
     <div class="color-magnifier" v-if="color" :style="{ left: cursorX - 80 + 'px', top: cursorY + 20 + 'px' }">
       <canvas ref="magCanvas" width="160" height="160"></canvas>
     </div>
+    <!-- Color history -->
+    <div v-if="colorHistory.length > 0" class="color-history" :style="{ left: cursorX + 16 + 'px', top: cursorY + 10 + 'px' }">
+      <div
+        v-for="(c, i) in colorHistory" :key="i"
+        class="history-swatch"
+        :style="{ background: c }"
+        :title="c"
+        @click.stop="copyHistoryColor(c)"
+      ></div>
+    </div>
   </div>
 </template>
 
@@ -26,16 +36,35 @@ const color = ref<ColorInfo | null>(null);
 const cursorX = ref(0);
 const cursorY = ref(0);
 const magCanvas = ref<HTMLCanvasElement | null>(null);
+const colorHistory = ref<string[]>([]);
+
+const MAX_HISTORY = 20;
+const HISTORY_KEY = "cappix-color-history";
 
 const emit = defineEmits<{
   (e: "pick", color: ColorInfo): void;
   (e: "close"): void;
 }>();
 
+function loadHistory() {
+  try {
+    const stored = localStorage.getItem(HISTORY_KEY);
+    if (stored) colorHistory.value = JSON.parse(stored);
+  } catch {}
+}
+
+function saveHistoryColor(hex: string) {
+  // Don't add duplicates
+  const idx = colorHistory.value.indexOf(hex);
+  if (idx !== -1) colorHistory.value.splice(idx, 1);
+  colorHistory.value.unshift(hex);
+  if (colorHistory.value.length > MAX_HISTORY) colorHistory.value.pop();
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(colorHistory.value));
+}
+
 function onMouseMove(e: MouseEvent) {
   cursorX.value = e.clientX;
   cursorY.value = e.clientY;
-  // Pick color at screen coordinates
   invoke<ColorInfo>("pick_color_at_point", { x: e.screenX, y: e.screenY })
     .then(c => { color.value = c; })
     .catch(() => {});
@@ -44,9 +73,14 @@ function onMouseMove(e: MouseEvent) {
 function onPick() {
   if (color.value) {
     navigator.clipboard.writeText(color.value.hex);
+    saveHistoryColor(color.value.hex);
     emit("pick", color.value);
   }
   close();
+}
+
+function copyHistoryColor(hex: string) {
+  navigator.clipboard.writeText(hex);
 }
 
 function close() {
@@ -55,6 +89,7 @@ function close() {
 }
 
 onMounted(() => {
+  loadHistory();
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") close();
   });
@@ -98,4 +133,22 @@ onMounted(() => {
   overflow: hidden;
   z-index: 100001;
 }
+.color-history {
+  position: fixed;
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  background: rgba(17, 24, 39, 0.95);
+  border: 1px solid #374151;
+  border-radius: 4px;
+  z-index: 100001;
+}
+.history-swatch {
+  width: 16px; height: 16px;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.2);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.history-swatch:hover { transform: scale(1.3); }
 </style>

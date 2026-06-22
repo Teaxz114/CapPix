@@ -32,6 +32,7 @@
       <button @click.stop="toggleClickthrough" :class="{ active: clickthrough }" title="鼠标穿透">✦</button>
       <span class="toolbar-sep"></span>
       <button @click.stop="copyImage" title="复制">复制</button>
+      <button @click.stop="saveImage" title="保存">保存</button>
       <button @click.stop="close" title="关闭">关闭</button>
     </div>
   </div>
@@ -60,6 +61,11 @@ onMounted(async () => {
     if (event.payload.id === pinId.value) {
       imageData.value = event.payload.image_base64;
     }
+  });
+
+  // ESC to close
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
   });
 });
 
@@ -152,6 +158,16 @@ async function copyImage() {
     await invoke("copy_image_to_clipboard", { imageBase64: imageData.value });
   } catch (e) {
     console.error("Copy failed:", e);
+  }
+}
+
+// Save image to file
+async function saveImage() {
+  if (!imageData.value) return;
+  try {
+    await invoke("save_image_to_file", { imageBase64: imageData.value });
+  } catch (e) {
+    console.error("Save failed:", e);
   }
 }
 

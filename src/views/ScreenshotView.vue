@@ -492,17 +492,6 @@ async function actionAnnotate() {
   }
 }
 
-async function actionCopy() {
-  if (!capturedBase64) return;
-  try {
-    await invoke("copy_image_to_clipboard", { imageBase64: capturedBase64 });
-  } catch (e) {
-    console.error("Copy failed:", e);
-    return;
-  }
-  await getCurrentWindow().close();
-}
-
 async function actionPin() {
   if (!capturedBase64) return;
   try {
@@ -535,12 +524,36 @@ async function actionSave() {
     const win = getCurrentWindow();
     await win.setAlwaysOnTop(false);
     await invoke("save_image_to_file", { imageBase64: capturedBase64 });
+    saveToHistory();
   } catch (e) {
     // User cancelled save dialog or error — don't close overlay
     console.error("Save failed:", e);
     return;
   }
   await getCurrentWindow().close();
+}
+
+async function actionCopy() {
+  if (!capturedBase64) return;
+  try {
+    await invoke("copy_image_to_clipboard", { imageBase64: capturedBase64 });
+    saveToHistory();
+  } catch (e) {
+    console.error("Copy failed:", e);
+    return;
+  }
+  await getCurrentWindow().close();
+}
+
+function saveToHistory() {
+  if (!capturedBase64) return;
+  invoke("history_save", {
+    imageBase64: capturedBase64,
+    width: Math.round(selectionW.value),
+    height: Math.round(selectionH.value),
+    source: "region",
+    ocrText: null,
+  }).catch((e) => console.error("History save failed:", e));
 }
 
 async function navigateToAnnotate(imageBase64: string) {
