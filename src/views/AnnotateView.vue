@@ -37,7 +37,7 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush } from "fabric";
+import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush, Group } from "fabric";
 import Toolbar from "../components/Toolbar.vue";
 import OcrPanel from "../components/OcrPanel.vue";
 import CanvasComponent from "../components/Canvas.vue";
@@ -295,11 +295,14 @@ function onMouseDown(opt: any) {
     activeObject = line;
     fabricCanvas.add(line);
   } else if (currentTool.value === "arrow") {
+    // Arrow: use a Group with Line + triangle arrowhead, created on mouseUp
     const arrow = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
       stroke: currentColor.value,
       strokeWidth: currentStrokeWidth.value,
-      selectable: true,
+      selectable: false,
+      evented: false,
     });
+    (arrow as any)._cappixArrow = true;
     activeObject = arrow;
     fabricCanvas.add(arrow);
   }
@@ -337,6 +340,45 @@ function onMouseUp() {
     applyMosaic(activeObject as Rect);
   }
 
+  // Convert arrow Line to Line+Triangle Group
+  if (currentTool.value === "arrow" && activeObject && (activeObject as any)._cappixArrow) {
+    const line = activeObject as Line;
+    const x1 = (line.x1 ?? 0), y1 = (line.y1 ?? 0);
+    const x2 = (line.x2 ?? 0), y2 = (line.y2 ?? 0);
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    fabricCanvas.remove(line);
+    if (len > 10) {
+      // Arrow: draw arrowhead triangle at end point, and replace Line with Group
+      const headLen = Math.min(20, len * 0.3);
+      const angle = Math.atan2(dy, dx);
+      const tipX = x2, tipY = y2;
+      const leftX = tipX - headLen * Math.cos(angle - Math.PI / 6);
+      const leftY = tipY - headLen * Math.sin(angle - Math.PI / 6);
+      const rightX = tipX - headLen * Math.cos(angle + Math.PI / 6);
+      const rightY = tipY - headLen * Math.sin(angle + Math.PI / 6);
+      const pathStr = `M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`;
+      const arrowHead = new Path(pathStr, {
+        fill: currentColor.value,
+        stroke: currentColor.value,
+        strokeWidth: 1,
+        selectable: false,
+        evented: false,
+      });
+      const arrowLine = new Line([x1, y1, x2, y2], {
+        stroke: currentColor.value,
+        strokeWidth: currentStrokeWidth.value,
+        selectable: false,
+        evented: false,
+      });
+      const group = new Group([arrowLine, arrowHead], {
+        selectable: true,
+        evented: true,
+      });
+      fabricCanvas.add(group);
+    }
+  }
+
   activeObject = null;
   fabricCanvas.renderAll();
   saveHistory();
@@ -358,21 +400,10 @@ function applyMosaic(rect: Rect) {
   // Remove the placeholder rect
   fabricCanvas.remove(rect);
 
-  // Read background pixels via temporary canvas
-  const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = fabricCanvas.getWidth();
-  tempCanvas.height = fabricCanvas.getHeight();
+  // Read background pixels by rendering the canvas (including background image) to a temp canvas
+  const tempCanvas = fabricCanvas.toCanvasElement();
   const tempCtx = tempCanvas.getContext("2d");
   if (!tempCtx) return;
-
-  // Draw current canvas background to temp canvas
-  const bgImg = fabricCanvas.backgroundImage;
-  if (bgImg) {
-    const bgCanvas = (bgImg as any).getElement?.() as HTMLImageElement;
-    if (bgCanvas) {
-      tempCtx.drawImage(bgCanvas, 0, 0);
-    }
-  }
 
   // Read pixel data from the mosaic region
   try {
@@ -496,13 +527,21 @@ function loadHistory(index: number) {
   });
 }
 
+// Export canvas including background image
+function exportCanvasBase64(): string {
+  if (!fabricCanvas) return "";
+  // toCanvasElement renders everything including background
+  const tempCanvas = fabricCanvas.toCanvasElement();
+  const dataUrl = tempCanvas.toDataURL("image/png");
+  return dataUrl.replace(/^data:image\/png;base64,/, "");
+}
+
 // Save/Copy/Pin actions
 async function saveToFile() {
   if (!fabricCanvas) return;
   setStatus("正在保存...");
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const base64 = exportCanvasBase64();
     await invoke("save_image_to_file", { imageBase64: base64 });
     setStatus("已保存");
   } catch (e) {
@@ -514,8 +553,7 @@ async function copyToClipboard() {
   if (!fabricCanvas) return;
   setStatus("正在复制...");
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const base64 = exportCanvasBase64();
     await invoke("copy_image_to_clipboard", { imageBase64: base64 });
     setStatus("已复制到剪贴板");
   } catch (e) {
@@ -527,8 +565,7 @@ async function pinToDesktop() {
   if (!fabricCanvas) return;
   setStatus("正在贴图...");
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const base64 = exportCanvasBase64();
     await invoke("create_pin_window", { imageBase64: base64 });
     setStatus("已贴图到桌面");
   } catch (e) {
@@ -542,8 +579,7 @@ async function performOcr() {
   ocrLoading.value = true;
   ocrError.value = null;
   try {
-    const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 1 });
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const base64 = exportCanvasBase64();
     const result = await invoke<OcrResult>("ocr_image", { imageBase64: base64 });
     if (result.error) {
       ocrError.value = result.error;
