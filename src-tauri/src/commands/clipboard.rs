@@ -117,7 +117,7 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let window = WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
-        tauri::WebviewUrl::App("/#/screenshot".into()),
+        tauri::WebviewUrl::App("/index.html#/screenshot".into()),
     )
     .title("CapPix Screenshot")
     .decorations(false)
@@ -147,7 +147,7 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     let window = WebviewWindowBuilder::new(
         &app,
         "annotate",
-        tauri::WebviewUrl::App("/annotate".into()),
+        tauri::WebviewUrl::App("/index.html#/annotate".into()),
     )
     .title("CapPix - 标注编辑")
     .decorations(true)
