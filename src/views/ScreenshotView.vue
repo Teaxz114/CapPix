@@ -276,14 +276,18 @@ onMounted(async () => {
   // Fetch virtual screen offset for coordinate conversion
   await fetchVirtualScreenOffset();
 
-  // ESC key handler
-  document.addEventListener("keydown", onKeyDown);
+  // ESC key handler — listen on window to ensure it works even without focus
+  window.addEventListener("keydown", onKeyDown);
+  // Also ensure this window has focus
+  try {
+    await getCurrentWindow().setFocus();
+  } catch (_) {}
 });
 
 onUnmounted(() => {
   if (unlisten) unlisten();
   if (windowDetectTimer) clearTimeout(windowDetectTimer);
-  document.removeEventListener("keydown", onKeyDown);
+  window.removeEventListener("keydown", onKeyDown);
 });
 
 function onKeyDown(e: KeyboardEvent) {
@@ -519,7 +523,7 @@ function cancelCapture() {
   width: 100vw;
   height: 100vh;
   cursor: crosshair;
-  background: transparent;
+  background: #000;
   z-index: 9999;
 }
 

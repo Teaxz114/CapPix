@@ -112,13 +112,17 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     .title("CapPix Screenshot")
     .decorations(false)
     .always_on_top(true)
-    .transparent(true)
     .skip_taskbar(true)
     .inner_size(size.width as f64, size.height as f64)
     .position(pos.x as f64, pos.y as f64)
     .resizable(false)
     .build()
     .map_err(|e| e.to_string())?;
+
+    // Focus the overlay so keyboard events (ESC) work
+    if let Some(overlay) = app.get_webview_window("screenshot-overlay") {
+        let _ = overlay.set_focus();
+    }
 
     Ok(())
 }

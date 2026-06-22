@@ -82,7 +82,8 @@ pub fn run() {
                                     log::error!("Failed to open overlay: {}", e);
                                     return;
                                 }
-                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                // Wait for overlay window to load and register its event listener
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                                 let _ = app.emit("screenshot-ready", result.image_base64);
                             }
                             Err(e) => log::error!("Capture failed: {}", e),
@@ -109,7 +110,8 @@ pub fn run() {
                                     log::error!("Failed to open overlay: {}", e);
                                     return;
                                 }
-                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                // Wait for overlay window to load and register its event listener
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                                 let _ = app.emit("screenshot-ready", result.image_base64);
                             }
                             Err(e) => log::error!("Capture failed: {}", e),
