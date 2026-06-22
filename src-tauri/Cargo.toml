@@ -40,3 +40,4 @@ log = "0.4"
 env_logger = "0.11"
 reqwest = { version = "0.12", features = ["json"] }
 urlencoding = "2"
+url = "2"

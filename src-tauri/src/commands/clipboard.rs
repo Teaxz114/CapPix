@@ -114,10 +114,13 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
         let _ = existing.close();
     }
 
+    // Use CustomProtocol with explicit URL to avoid PathBuf losing the hash fragment
+    let url = url::Url::parse("http://tauri.localhost/index.html#/screenshot")
+        .map_err(|e| e.to_string())?;
     let window = WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
-        tauri::WebviewUrl::App("/index.html#/screenshot".into()),
+        tauri::WebviewUrl::CustomProtocol(url),
     )
     .title("CapPix Screenshot")
     .decorations(false)
@@ -144,10 +147,12 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
         let _ = existing.close();
     }
 
+    let url = url::Url::parse("http://tauri.localhost/index.html#/annotate")
+        .map_err(|e| e.to_string())?;
     let window = WebviewWindowBuilder::new(
         &app,
         "annotate",
-        tauri::WebviewUrl::App("/index.html#/annotate".into()),
+        tauri::WebviewUrl::CustomProtocol(url),
     )
     .title("CapPix - 标注编辑")
     .decorations(true)

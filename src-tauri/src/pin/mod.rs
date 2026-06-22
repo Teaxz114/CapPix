@@ -22,8 +22,9 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
     let id = format!("pin-{}", uuid::Uuid::new_v4());
     use tauri::WebviewWindowBuilder;
 
-    let url = format!("/index.html#/pin?id={}", id);
-    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App(url.into()))
+    let url = url::Url::parse(&format!("http://tauri.localhost/index.html#/pin?id={}", id))
+        .map_err(|e| e.to_string())?;
+    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::CustomProtocol(url))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
@@ -67,8 +68,9 @@ pub fn create_pin_window_at(
     let id = format!("pin-{}", uuid::Uuid::new_v4());
     use tauri::WebviewWindowBuilder;
 
-    let url = format!("/index.html#/pin?id={}", id);
-    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App(url.into()))
+    let url = url::Url::parse(&format!("http://tauri.localhost/index.html#/pin?id={}", id))
+        .map_err(|e| e.to_string())?;
+    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::CustomProtocol(url))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
