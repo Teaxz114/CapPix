@@ -132,7 +132,7 @@ pub fn set_pin_opacity(app: AppHandle, id: String, opacity: f64) -> Result<(), S
         let alpha = (opacity.clamp(0.1, 1.0) * 255.0) as u8;
         unsafe {
             // SetLayeredWindowAttributes requires WS_EX_LAYERED (set at creation)
-            SetLayeredWindowAttributes(
+            let _ = SetLayeredWindowAttributes(
                 hwnd,
                 windows::Win32::Foundation::COLORREF(0),
                 alpha,
