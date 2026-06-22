@@ -2,14 +2,14 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
 #[tauri::command]
-pub async fn save_image_to_file(app: tauri::AppHandle, image_base64: String) -> Result<String, String> {
+pub fn save_image_to_file(app: tauri::AppHandle, image_base64: String) -> Result<String, String> {
     let data = STANDARD.decode(&image_base64).map_err(|e| e.to_string())?;
 
     use tauri_plugin_dialog::DialogExt;
     let path = app.dialog()
         .file()
         .set_title("保存截图")
-        .set_file_name("screenshot.png")
+        .set_file_name("CapPix_screenshot.png")
         .add_filter("PNG 图片", &["png"])
         .add_filter("JPEG 图片", &["jpg", "jpeg"])
         .blocking_save_file();
