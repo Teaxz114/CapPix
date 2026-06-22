@@ -455,16 +455,16 @@ async function doCaptureRegion(x: number, y: number, w: number, h: number, autoN
     const scaleX = screenshotImage.value ? screenshotImage.value.naturalWidth / window.innerWidth : 1;
     const scaleY = screenshotImage.value ? screenshotImage.value.naturalHeight / window.innerHeight : 1;
 
-    const result = await invoke<{ image_base64: string }>("crop_image", {
+    const croppedBase64 = await invoke<string>("crop_image", {
       imageBase64: screenshotData.value,
       x: Math.round(x * scaleX),
       y: Math.round(y * scaleY),
       width: Math.round(w * scaleX),
       height: Math.round(h * scaleY),
     });
-    capturedBase64 = result.image_base64;
+    capturedBase64 = croppedBase64;
     if (autoNavigate) {
-      await navigateToAnnotate(capturedBase64);
+      await navigateToAnnotate(croppedBase64);
     }
   } catch (err) {
     console.error("Failed to crop region:", err);
