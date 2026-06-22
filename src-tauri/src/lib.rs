@@ -9,7 +9,7 @@ mod tray;
 
 use commands::history::HistoryState;
 use std::sync::Mutex;
-use tauri::{Emitter, Listener, Manager};
+use tauri::{Listener, Manager};
 
 pub fn run() {
     tauri::Builder::default()
