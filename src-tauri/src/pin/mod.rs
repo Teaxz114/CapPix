@@ -22,9 +22,8 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
     let id = format!("pin-{}", uuid::Uuid::new_v4());
     use tauri::WebviewWindowBuilder;
 
-    let url = url::Url::parse(&format!("http://tauri.localhost/index.html#/pin?id={}", id))
-        .map_err(|e| e.to_string())?;
-    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::CustomProtocol(url))
+    // Use App URL without hash fragment, then navigate via JS after creation
+    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("/index.html".into()))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
@@ -36,9 +35,12 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
         .build()
         .map_err(|e| e.to_string())?;
 
+    // Navigate to the pin route with id parameter
+    let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
+
     // Enable layered window for opacity support
-    if let Some(window) = app.get_webview_window(&id) {
-        let raw_hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    if let Some(w) = app.get_webview_window(&id) {
+        let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
         let hwnd = HWND(raw_hwnd.0);
         unsafe {
             let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
@@ -68,9 +70,8 @@ pub fn create_pin_window_at(
     let id = format!("pin-{}", uuid::Uuid::new_v4());
     use tauri::WebviewWindowBuilder;
 
-    let url = url::Url::parse(&format!("http://tauri.localhost/index.html#/pin?id={}", id))
-        .map_err(|e| e.to_string())?;
-    let _window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::CustomProtocol(url))
+    // Use App URL without hash fragment, then navigate via JS after creation
+    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("/index.html".into()))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
@@ -82,9 +83,12 @@ pub fn create_pin_window_at(
         .build()
         .map_err(|e| e.to_string())?;
 
+    // Navigate to the pin route with id parameter
+    let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
+
     // Enable layered window for opacity support
-    if let Some(window) = app.get_webview_window(&id) {
-        let raw_hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    if let Some(w) = app.get_webview_window(&id) {
+        let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
         let hwnd = HWND(raw_hwnd.0);
         unsafe {
             let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);

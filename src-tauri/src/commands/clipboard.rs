@@ -123,13 +123,13 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
         let _ = existing.close();
     }
 
-    // Use CustomProtocol with explicit URL to avoid PathBuf losing the hash fragment
-    let url = url::Url::parse("http://tauri.localhost/index.html#/screenshot")
-        .map_err(|e| e.to_string())?;
+    // Use App URL without hash fragment, then navigate via JS after creation
+    // WebviewUrl::App with hash fragments doesn't work (Url::join strips #)
+    // WebviewUrl::CustomProtocol doesn't register with Tauri's protocol handler
     let window = WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
-        tauri::WebviewUrl::CustomProtocol(url),
+        tauri::WebviewUrl::App("/index.html".into()),
     )
     .title("CapPix Screenshot")
     .decorations(false)
@@ -140,6 +140,9 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     .resizable(false)
     .build()
     .map_err(|e| e.to_string())?;
+
+    // Navigate to the screenshot route via JS after window creation
+    let _ = window.eval("window.location.hash = '/screenshot'");
 
     // Focus the overlay so keyboard events (ESC) work
     let _ = window.set_focus();
@@ -185,12 +188,12 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
         let _ = existing.close();
     }
 
-    let url = url::Url::parse("http://tauri.localhost/index.html#/annotate")
-        .map_err(|e| e.to_string())?;
+    // Use App URL without hash fragment, then navigate via JS after creation
+    let url = tauri::WebviewUrl::App("/index.html".into());
     let window = WebviewWindowBuilder::new(
         &app,
         "annotate",
-        tauri::WebviewUrl::CustomProtocol(url),
+        url,
     )
     .title("CapPix - 标注编辑")
     .decorations(true)
@@ -200,6 +203,9 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     .resizable(true)
     .build()
     .map_err(|e| e.to_string())?;
+
+    // Navigate to the annotate route via JS after window creation
+    let _ = window.eval("window.location.hash = '/annotate'");
 
     // Focus the window
     let _ = window.set_focus();
