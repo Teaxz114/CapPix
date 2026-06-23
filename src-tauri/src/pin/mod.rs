@@ -23,7 +23,7 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
     use tauri::WebviewWindowBuilder;
 
     // Use App URL without hash fragment, then navigate via JS after creation
-    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("/index.html".into()))
+    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
@@ -71,7 +71,7 @@ pub fn create_pin_window_at(
     use tauri::WebviewWindowBuilder;
 
     // Use App URL without hash fragment, then navigate via JS after creation
-    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("/index.html".into()))
+    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)

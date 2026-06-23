@@ -129,7 +129,7 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let window = WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
-        tauri::WebviewUrl::App("/index.html".into()),
+        tauri::WebviewUrl::App("index.html".into()),
     )
     .title("CapPix Screenshot")
     .decorations(false)
@@ -189,7 +189,7 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     }
 
     // Use App URL without hash fragment, then navigate via JS after creation
-    let url = tauri::WebviewUrl::App("/index.html".into());
+    let url = tauri::WebviewUrl::App("index.html".into());
     let window = WebviewWindowBuilder::new(
         &app,
         "annotate",
