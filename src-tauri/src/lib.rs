@@ -34,6 +34,8 @@ pub fn run() {
 
             // Initialize pending screenshot store
             app.manage(commands::clipboard::PendingScreenshot(Mutex::new(None)));
+            // Initialize pending annotate image store
+            app.manage(commands::clipboard::PendingAnnotateImage(Mutex::new(None)));
 
             // Restore pinned windows from database
             {
@@ -144,6 +146,8 @@ pub fn run() {
             commands::clipboard::open_screenshot_overlay,
             commands::clipboard::open_annotate_window,
             commands::clipboard::get_pending_screenshot,
+            commands::clipboard::get_pending_annotate_image,
+            commands::clipboard::trigger_capture,
             commands::save::save_image_to_file,
             commands::color::pick_color_at_point,
             commands::history::history_save,
@@ -151,6 +155,7 @@ pub fn run() {
             commands::history::history_search,
             commands::history::history_delete,
             commands::history::history_count,
+            commands::history::history_clear,
             commands::history::pin_save,
             commands::history::pin_list,
             commands::history::pin_delete,

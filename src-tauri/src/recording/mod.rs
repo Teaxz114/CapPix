@@ -93,7 +93,8 @@ pub async fn start_recording(
         .arg("-pix_fmt").arg("yuv420p")
         .arg(&out);
 
-    cmd.stdout(std::process::Stdio::null())
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
 
     let child = cmd.spawn().map_err(|e| format!("Failed to start ffmpeg: {}", e))?;

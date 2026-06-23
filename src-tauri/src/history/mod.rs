@@ -115,6 +115,11 @@ impl HistoryDb {
         self.conn.query_row("SELECT COUNT(*) FROM screenshot_history", [], |row| row.get(0))
     }
 
+    pub fn clear(&self) -> SqlResult<()> {
+        self.conn.execute("DELETE FROM screenshot_history", [])?;
+        Ok(())
+    }
+
     // --- Pin persistence methods ---
 
     pub fn save_pin(&self, pin: &PinRecord) -> SqlResult<()> {

@@ -41,6 +41,7 @@ import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush, 
 import Toolbar from "../components/Toolbar.vue";
 import OcrPanel from "../components/OcrPanel.vue";
 import CanvasComponent from "../components/Canvas.vue";
+import { useConfigStore } from "../stores/config";
 
 interface OcrBlock {
   text: string;
@@ -58,8 +59,9 @@ interface OcrResult {
 const canvasRef = ref<InstanceType<typeof CanvasComponent> | null>(null);
 const imageBase64 = ref("");
 const currentTool = ref("rect");
-const currentColor = ref("#ff4444");
-const currentStrokeWidth = ref(3);
+const configStore = useConfigStore();
+const currentColor = ref(configStore.config.defaultColor);
+const currentStrokeWidth = ref(configStore.config.defaultStrokeWidth);
 const statusMessage = ref("");
 const historyStack = ref<string[]>([]);
 const historyIndex = ref(-1);
@@ -76,14 +78,24 @@ let activeObject: Rect | Ellipse | Line | IText | Path | null = null;
 let unlisten: UnlistenFn | null = null;
 
 onMounted(async () => {
-  // Listen for screenshot data
+  // Try to get image data from PendingAnnotateImage (set by Rust before window creation)
+  try {
+    const data = await invoke<string | null>("get_pending_annotate_image");
+    if (data) {
+      imageBase64.value = data;
+    }
+  } catch (_) {}
+
+  // Also listen for annotate-image event as fallback (e.g. from history view)
   unlisten = await listen<string>("annotate-image", (event) => {
     imageBase64.value = event.payload;
     setTimeout(initCanvasTools, 300);
   });
 
-  // Listen for direct image prop via URL params
-  const params = new URLSearchParams(window.location.search);
+  // Listen for direct image prop via URL hash params
+  const hash = window.location.hash;
+  const queryString = hash.includes("?") ? hash.split("?")[1] : "";
+  const params = new URLSearchParams(queryString);
   const imgData = params.get("img");
   if (imgData) {
     imageBase64.value = imgData;
@@ -386,7 +398,7 @@ function onMouseUp() {
 
 function applyMosaic(rect: Rect) {
   if (!fabricCanvas) return;
-  const blockSize = 10;
+  const blockSize = configStore.config.mosaicBlockSize;
   const left = rect.left || 0;
   const top = rect.top || 0;
   const width = rect.width || 0;

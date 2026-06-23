@@ -65,7 +65,7 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import RecordingBar from "../components/RecordingBar.vue";
 
 interface HotkeyInfo {
@@ -81,7 +81,6 @@ const captureTools = [
   { id: "capture_region", name: "区域截图", shortcut: "Ctrl+Shift+A" },
   { id: "capture_fullscreen", name: "全屏截图", shortcut: "Ctrl+Shift+S" },
   { id: "capture_window", name: "窗口截图", shortcut: "Ctrl+Shift+Q" },
-  { id: "capture_scroll", name: "滚动截图", shortcut: "" },
 ];
 
 const utilTools = [
@@ -111,16 +110,22 @@ onMounted(async () => {
 
 function handleAction(id: string) {
   if (id === "capture_region" || id === "capture_fullscreen" || id === "capture_window") {
-    // Emit hotkey event to trigger capture (same as pressing the keyboard shortcut)
-    emit("hotkey", id);
-  } else if (id === "capture_scroll") {
-    alert("滚动截图：请先截图当前区域，然后按住鼠标滚轮向下滚动，系统会自动拼接长图。\n\n（该功能正在开发中，敬请期待）");
+    // Trigger capture directly via invoke + open overlay
+    triggerCapture(id);
   } else if (id === "screen_record") {
     startRecording();
   } else if (id === "color_picker") {
     startColorPicker();
   } else if (id === "pin_clipboard") {
     pinFromClipboard();
+  }
+}
+
+async function triggerCapture(id: string) {
+  try {
+    await invoke("trigger_capture", { mode: id });
+  } catch (e) {
+    console.error("Capture failed:", e);
   }
 }
 

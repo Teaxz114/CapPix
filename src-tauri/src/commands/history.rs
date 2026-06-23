@@ -61,6 +61,12 @@ pub fn history_count(state: tauri::State<HistoryState>) -> Result<i64, String> {
     db.count().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn history_clear(state: tauri::State<HistoryState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.clear().map_err(|e| e.to_string())
+}
+
 // --- Pin persistence commands ---
 
 #[tauri::command]

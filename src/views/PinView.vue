@@ -51,8 +51,10 @@ const opacity = ref(1);
 const clickthrough = ref(false);
 let unlisten: (() => void) | null = null;
 
-// Get pin ID from URL params
-const params = new URLSearchParams(window.location.search);
+// Get pin ID from URL hash params: /index.html#/pin?id=xxx
+const hash = window.location.hash; // e.g. "#/pin?id=pin-xxx"
+const queryString = hash.includes("?") ? hash.split("?")[1] : "";
+const params = new URLSearchParams(queryString);
 pinId.value = params.get("id") || "";
 
 onMounted(async () => {
@@ -174,6 +176,8 @@ async function saveImage() {
 // Close this pin window
 async function close() {
   try {
+    // Delete from database so it won't be restored on next launch
+    await invoke("pin_delete", { id: pinId.value });
     await invoke("close_pin_window", { id: pinId.value });
   } catch (_) {
     await getCurrentWindow().close();

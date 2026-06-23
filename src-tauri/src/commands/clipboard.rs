@@ -1,13 +1,22 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use std::sync::Mutex;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 /// Pending screenshot data for the overlay window to pick up
 pub struct PendingScreenshot(pub Mutex<Option<String>>);
 
+/// Pending annotate image data for the annotate window to pick up
+pub struct PendingAnnotateImage(pub Mutex<Option<String>>);
+
 #[tauri::command]
 pub fn get_pending_screenshot(state: tauri::State<PendingScreenshot>) -> Result<Option<String>, String> {
+    let mut data = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(data.take())
+}
+
+#[tauri::command]
+pub fn get_pending_annotate_image(state: tauri::State<PendingAnnotateImage>) -> Result<Option<String>, String> {
     let mut data = state.0.lock().map_err(|e| e.to_string())?;
     Ok(data.take())
 }
@@ -139,8 +148,37 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+    match mode.as_str() {
+        "capture_region" | "capture_window" => {
+            match crate::capture::screen::capture_screen(0) {
+                Ok(result) => {
+                    if let Some(state) = app.try_state::<PendingScreenshot>() {
+                        if let Ok(mut data) = state.0.lock() {
+                            *data = Some(result.image_base64.clone());
+                        }
+                    }
+                    open_screenshot_overlay(app)?;
+                }
+                Err(e) => log::error!("Capture failed: {}", e),
+            }
+        }
+        "capture_fullscreen" => {
+            match crate::capture::screen::capture_screen(0) {
+                Ok(result) => {
+                    open_annotate_window(app, result.image_base64)?;
+                }
+                Err(e) => log::error!("Capture failed: {}", e),
+            }
+        }
+        _ => return Err(format!("Unknown capture mode: {}", mode)),
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Result<(), String> {
-    use tauri::WebviewWindowBuilder;
+     use tauri::WebviewWindowBuilder;
 
     // Close existing annotate window if any
     if let Some(existing) = app.get_webview_window("annotate") {
@@ -166,12 +204,13 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     // Focus the window
     let _ = window.set_focus();
 
-    // Delay emit to allow the frontend to mount and register the event listener
-    let app_clone = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let _ = app_clone.emit("annotate-image", image_base64);
-    });
+    // Store image data in PendingAnnotateImage for the frontend to pick up
+    // This is more reliable than emit which can be missed if the listener isn't ready
+    if let Some(state) = app.try_state::<PendingAnnotateImage>() {
+        if let Ok(mut data) = state.0.lock() {
+            *data = Some(image_base64);
+        }
+    }
 
     Ok(())
 }
