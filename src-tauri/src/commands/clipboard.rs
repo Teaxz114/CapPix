@@ -109,8 +109,15 @@ pub fn crop_image(
 
 #[tauri::command]
 pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::WebviewWindowBuilder;
+    // Reuse the main window instead of creating a new webview window.
+    // Creating new windows via WebviewWindowBuilder causes Edge to open because
+    // the URL resolution (both App and CustomProtocol variants) fails to properly
+    // register with Tauri's custom protocol handler in the new webview.
+    // The main window is already correctly initialized with Tauri's protocol.
+    let window = app.get_webview_window("main")
+        .ok_or("Main window not found")?;
 
+    // Transform main window into fullscreen overlay mode
     let monitor = app
         .primary_monitor()
         .map_err(|e| e.to_string())?
@@ -118,34 +125,15 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let pos = monitor.position();
     let size = monitor.size();
 
-    // Close existing overlay if any
-    if let Some(existing) = app.get_webview_window("screenshot-overlay") {
-        let _ = existing.close();
-    }
-
-    // Use App URL without hash fragment, then navigate via JS after creation
-    // WebviewUrl::App with hash fragments doesn't work (Url::join strips #)
-    // WebviewUrl::CustomProtocol doesn't register with Tauri's protocol handler
-    let window = WebviewWindowBuilder::new(
-        &app,
-        "screenshot-overlay",
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("CapPix Screenshot")
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .inner_size(size.width as f64, size.height as f64)
-    .position(pos.x as f64, pos.y as f64)
-    .resizable(false)
-    .build()
-    .map_err(|e| e.to_string())?;
-
-    // Navigate to the screenshot route via JS after window creation
-    let _ = window.eval("window.location.hash = '/screenshot'");
-
-    // Focus the overlay so keyboard events (ESC) work
+    let _ = window.set_decorations(false);
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_size(tauri::LogicalSize::new(size.width as f64, size.height as f64));
+    let _ = window.set_position(tauri::LogicalPosition::new(pos.x as f64, pos.y as f64));
+    let _ = window.show();
     let _ = window.set_focus();
+
+    // Navigate to screenshot route via JS (main window already has Vue Router)
+    let _ = window.eval("window.location.hash = '/screenshot'");
 
     Ok(())
 }
@@ -181,42 +169,28 @@ pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String
 
 #[tauri::command]
 pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Result<(), String> {
-     use tauri::WebviewWindowBuilder;
+    // Reuse the main window — same reason as open_screenshot_overlay
+    let window = app.get_webview_window("main")
+        .ok_or("Main window not found")?;
 
-    // Close existing annotate window if any
-    if let Some(existing) = app.get_webview_window("annotate") {
-        let _ = existing.close();
-    }
-
-    // Use App URL without hash fragment, then navigate via JS after creation
-    let url = tauri::WebviewUrl::App("index.html".into());
-    let window = WebviewWindowBuilder::new(
-        &app,
-        "annotate",
-        url,
-    )
-    .title("CapPix - 标注编辑")
-    .decorations(true)
-    .always_on_top(false)
-    .inner_size(1200.0, 800.0)
-    .center()
-    .resizable(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-
-    // Navigate to the annotate route via JS after window creation
-    let _ = window.eval("window.location.hash = '/annotate'");
-
-    // Focus the window
+    // Restore window to normal mode (in case coming from screenshot overlay)
+    let _ = window.set_decorations(true);
+    let _ = window.set_always_on_top(false);
+    let _ = window.set_resizable(true);
+    let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
+    let _ = window.center();
+    let _ = window.show();
     let _ = window.set_focus();
 
-    // Store image data in PendingAnnotateImage for the frontend to pick up
-    // This is more reliable than emit which can be missed if the listener isn't ready
+    // Store image data for the frontend to pick up
     if let Some(state) = app.try_state::<PendingAnnotateImage>() {
         if let Ok(mut data) = state.0.lock() {
             *data = Some(image_base64);
         }
     }
+
+    // Navigate to annotate route
+    let _ = window.eval("window.location.hash = '/annotate'");
 
     Ok(())
 }
