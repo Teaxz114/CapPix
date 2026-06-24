@@ -157,6 +157,7 @@ pub fn run() {
             commands::history::history_delete,
             commands::history::history_count,
             commands::history::history_clear,
+            commands::history::get_screenshot_image,
             commands::history::pin_save,
             commands::history::pin_list,
             commands::history::pin_delete,

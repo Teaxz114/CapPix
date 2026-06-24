@@ -1,5 +1,6 @@
 use crate::history::{HistoryDb, PinRecord, ScreenshotRecord};
 use std::sync::Mutex;
+use tauri::Manager;
 
 pub struct HistoryState {
     pub db: Mutex<HistoryDb>,
@@ -7,6 +8,7 @@ pub struct HistoryState {
 
 #[tauri::command]
 pub fn history_save(
+    app: tauri::AppHandle,
     state: tauri::State<HistoryState>,
     image_base64: String,
     width: u32,
@@ -14,11 +16,27 @@ pub fn history_save(
     source: String,
     ocr_text: Option<String>,
 ) -> Result<i64, String> {
+    // Save image to file first
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let image_data = STANDARD.decode(&image_base64).map_err(|e| e.to_string())?;
+
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let screenshots_dir = app_data.join("screenshots");
+    std::fs::create_dir_all(&screenshots_dir).map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("{}_{}.png", timestamp, source);
+    let file_path = screenshots_dir.join(&filename);
+    std::fs::write(&file_path, &image_data).map_err(|e| e.to_string())?;
+
+    let image_path = file_path.to_string_lossy().to_string();
+
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let record = ScreenshotRecord {
         id: 0,
         timestamp: String::new(),
-        image_base64,
+        image_path,
         width,
         height,
         source,
@@ -51,8 +69,17 @@ pub fn history_search(
 
 #[tauri::command]
 pub fn history_delete(state: tauri::State<HistoryState>, id: i64) -> Result<(), String> {
+    // Also delete the image file
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.delete(id).map_err(|e| e.to_string())
+    // Get the image path before deleting the record
+    let image_path: Option<String> = db.get_image_path(id).ok();
+    db.delete(id).map_err(|e| e.to_string())?;
+    drop(db);
+    // Delete the file after releasing the lock
+    if let Some(path) = image_path {
+        let _ = std::fs::remove_file(&path);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -64,7 +91,28 @@ pub fn history_count(state: tauri::State<HistoryState>) -> Result<i64, String> {
 #[tauri::command]
 pub fn history_clear(state: tauri::State<HistoryState>) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.clear().map_err(|e| e.to_string())
+    // Get all image paths before clearing
+    let paths: Vec<String> = db.list(i64::MAX, 0)
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.image_path.clone())
+        .collect();
+    db.clear().map_err(|e| e.to_string())?;
+    drop(db);
+    // Delete all image files
+    for path in paths {
+        let _ = std::fs::remove_file(&path);
+    }
+    Ok(())
+}
+
+/// Read a screenshot image from file and return as base64 (for on-demand loading)
+#[tauri::command]
+pub fn get_screenshot_image(image_path: String) -> Result<String, String> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let data = std::fs::read(&image_path).map_err(|e| format!("Failed to read image: {}", e))?;
+    Ok(STANDARD.encode(&data))
 }
 
 // --- Pin persistence commands ---

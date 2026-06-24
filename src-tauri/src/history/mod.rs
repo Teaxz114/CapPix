@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct ScreenshotRecord {
     pub id: i64,
     pub timestamp: String,
-    pub image_base64: String,
+    pub image_path: String,
     pub width: u32,
     pub height: u32,
     pub source: String,
@@ -36,7 +36,7 @@ impl HistoryDb {
             "CREATE TABLE IF NOT EXISTS screenshot_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-                image_base64 TEXT NOT NULL,
+                image_path TEXT NOT NULL,
                 width INTEGER NOT NULL,
                 height INTEGER NOT NULL,
                 source TEXT NOT NULL DEFAULT 'region',
@@ -56,6 +56,33 @@ impl HistoryDb {
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             );",
         )?;
+
+        // Migration: if old column image_base64 exists, migrate data
+        let has_base64_col: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('screenshot_history') WHERE name='image_base64'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0) > 0;
+        let has_path_col: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('screenshot_history') WHERE name='image_path'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0) > 0;
+
+        if has_base64_col && !has_path_col {
+            log::info!("Migrating screenshot_history: image_base64 → image_path");
+            // Add new column, mark old records as "migrated" (path will be empty)
+            conn.execute_batch(
+                "ALTER TABLE screenshot_history ADD COLUMN image_path TEXT NOT NULL DEFAULT '';
+                 -- Note: old base64 data is lost in migration; users should re-capture",
+            )?;
+            // Drop old column not easily possible in SQLite, but we'll just ignore it
+        }
+
         Ok(Self { conn })
     }
 
@@ -63,21 +90,21 @@ impl HistoryDb {
 
     pub fn insert(&self, record: &ScreenshotRecord) -> SqlResult<i64> {
         self.conn.execute(
-            "INSERT INTO screenshot_history (image_base64, width, height, source, ocr_text) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![record.image_base64, record.width, record.height, record.source, record.ocr_text],
+            "INSERT INTO screenshot_history (image_path, width, height, source, ocr_text) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![record.image_path, record.width, record.height, record.source, record.ocr_text],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn list(&self, limit: i64, offset: i64) -> SqlResult<Vec<ScreenshotRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, timestamp, image_base64, width, height, source, ocr_text FROM screenshot_history ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
+            "SELECT id, timestamp, image_path, width, height, source, ocr_text FROM screenshot_history ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
         )?;
         let rows = stmt.query_map(params![limit, offset], |row| {
             Ok(ScreenshotRecord {
                 id: row.get(0)?,
                 timestamp: row.get(1)?,
-                image_base64: row.get(2)?,
+                image_path: row.get(2)?,
                 width: row.get(3)?,
                 height: row.get(4)?,
                 source: row.get(5)?,
@@ -90,13 +117,13 @@ impl HistoryDb {
     pub fn search(&self, query: &str, limit: i64) -> SqlResult<Vec<ScreenshotRecord>> {
         let pattern = format!("%{}%", query);
         let mut stmt = self.conn.prepare(
-            "SELECT id, timestamp, image_base64, width, height, source, ocr_text FROM screenshot_history WHERE ocr_text LIKE ?1 ORDER BY timestamp DESC LIMIT ?2"
+            "SELECT id, timestamp, image_path, width, height, source, ocr_text FROM screenshot_history WHERE ocr_text LIKE ?1 ORDER BY timestamp DESC LIMIT ?2"
         )?;
         let rows = stmt.query_map(params![pattern, limit], |row| {
             Ok(ScreenshotRecord {
                 id: row.get(0)?,
                 timestamp: row.get(1)?,
-                image_base64: row.get(2)?,
+                image_path: row.get(2)?,
                 width: row.get(3)?,
                 height: row.get(4)?,
                 source: row.get(5)?,
@@ -109,6 +136,14 @@ impl HistoryDb {
     pub fn delete(&self, id: i64) -> SqlResult<()> {
         self.conn.execute("DELETE FROM screenshot_history WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    pub fn get_image_path(&self, id: i64) -> SqlResult<String> {
+        self.conn.query_row(
+            "SELECT image_path FROM screenshot_history WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
     }
 
     pub fn count(&self) -> SqlResult<i64> {

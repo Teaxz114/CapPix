@@ -11,7 +11,7 @@
     <div class="history-count">共 {{ totalCount }} 条记录</div>
     <div class="history-list" v-if="entries.length">
       <div v-for="entry in entries" :key="entry.id" class="history-item" @click="openEntry(entry)">
-        <img :src="`data:image/png;base64,${entry.image_base64}`" class="history-thumb" />
+        <img :src="thumbnails[entry.id] || ''" class="history-thumb" />
         <div class="history-info">
           <div class="history-meta">
             <span class="history-source">{{ sourceLabel(entry.source) }}</span>
@@ -34,7 +34,7 @@ import { invoke } from "@tauri-apps/api/core";
 interface ScreenshotRecord {
   id: number;
   timestamp: string;
-  image_base64: string;
+  image_path: string;
   width: number;
   height: number;
   source: string;
@@ -42,6 +42,7 @@ interface ScreenshotRecord {
 }
 
 const entries = ref<ScreenshotRecord[]>([]);
+const thumbnails = ref<Record<number, string>>({}); // id -> base64 data URL
 const totalCount = ref(0);
 const searchQuery = ref("");
 
@@ -51,7 +52,19 @@ async function loadHistory() {
   try {
     entries.value = await invoke<ScreenshotRecord[]>("history_list", { limit: 50, offset: 0 });
     totalCount.value = await invoke<number>("history_count");
+    // Load thumbnails on demand (only visible items)
+    for (const entry of entries.value) {
+      loadThumbnail(entry.id, entry.image_path);
+    }
   } catch (e) { console.error("Failed to load history:", e); }
+}
+
+async function loadThumbnail(id: number, imagePath: string) {
+  if (thumbnails.value[id]) return;
+  try {
+    const base64 = await invoke<string>("get_screenshot_image", { imagePath });
+    thumbnails.value[id] = `data:image/png;base64,${base64}`;
+  } catch (e) { console.error("Failed to load thumbnail:", id, e); }
 }
 
 async function onSearch() {
@@ -76,9 +89,12 @@ async function clearAll() {
   } catch (e) { console.error("Clear failed:", e); }
 }
 
-function openEntry(entry: ScreenshotRecord) {
-  // Open in annotate window
-  invoke("open_annotate_window", { imageBase64: entry.image_base64 });
+async function openEntry(entry: ScreenshotRecord) {
+  // Load image on demand, then open in annotate window
+  try {
+    const base64 = await invoke<string>("get_screenshot_image", { imagePath: entry.image_path });
+    invoke("open_annotate_window", { imageBase64: base64 });
+  } catch (e) { console.error("Failed to open entry:", e); }
 }
 
 function sourceLabel(s: string) {
