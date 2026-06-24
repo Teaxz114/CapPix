@@ -6,6 +6,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_LAYERED, WS_EX_TRANSPARENT,
 };
 
+mod native_window;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct PinWindow {
@@ -21,69 +23,55 @@ pub struct PinWindow {
 pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String, String> {
     let id = format!("pin-{}", uuid::Uuid::new_v4());
 
-    // Store pin data for PinView to pick up (same pattern as PendingScreenshot)
-    // We use emit since pin windows still need to be separate (they float on desktop)
-    // But we store the data first so the window can pull it after mount
-    if let Some(state) = app.try_state::<crate::commands::clipboard::PendingScreenshot>() {
-        // Reuse PendingScreenshot as a temporary data store for pin image
-        // This avoids the timing issue with emit events
-        if let Ok(mut data) = state.0.lock() {
-            *data = Some(image_base64.clone());
-        }
-    }
+        // Decode base64 image and create a native Win32 pin window (no webview!)
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD;
+        let image_data = STANDARD.decode(&image_base64).map_err(|e| e.to_string())?;
+        let img = image::load_from_memory(&image_data).map_err(|e| e.to_string())?;
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
 
-    // Create the pin window — use the main window as a fallback if new window fails
-    use tauri::WebviewWindowBuilder;
-    match WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
-        .title("CapPix Pin")
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .inner_size(400.0, 300.0)
-        .center()
-        .resizable(true)
-        .build()
-    {
-        Ok(window) => {
-            let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
-        }
-        Err(e) => {
-            log::warn!("Failed to create pin webview window: {}, using main window instead", e);
-            // Fallback: navigate main window to pin view
-            if let Some(main_win) = app.get_webview_window("main") {
-                let _ = main_win.set_decorations(false);
-                let _ = main_win.set_always_on_top(true);
-                let _ = main_win.set_size(tauri::LogicalSize::new(400.0, 300.0));
-                let _ = main_win.center();
-                let _ = main_win.show();
-                let _ = main_win.set_focus();
-                let _ = main_win.eval(&format!("window.location.hash = '/pin?id={}'", id));
+        // Create native window at center of screen
+        let monitor = app.primary_monitor().map_err(|e| e.to_string())?.ok_or("No monitor")?;
+        let mon_size = monitor.size();
+        let x = (mon_size.width as i32 - width as i32) / 2;
+        let y = (mon_size.height as i32 - height as i32) / 2;
+
+        let hwnd = native_window::NativePinWindow::create(
+            rgba.as_raw(),
+            width as i32,
+            height as i32,
+            x,
+            y,
+        )?;
+
+        // Store hwnd in the pin record for future reference
+        log::info!("Native pin window created: {} (HWND {:?})", id, hwnd);
+
+        // Save to database for persistence
+        if let Some(state) = app.try_state::<crate::commands::history::HistoryState>() {
+            if let Ok(db) = state.db.lock() {
+                let image_path = format!("pins/{}/image.png", id);
+                let app_data = app.path().app_data_dir().unwrap();
+                let full_path = app_data.join(&image_path);
+                std::fs::create_dir_all(full_path.parent().unwrap()).ok();
+                std::fs::write(&full_path, &image_data).ok();
+                let _ = db.save_pin(&crate::history::PinRecord {
+                    id: id.clone(),
+                    image_path: full_path.to_string_lossy().to_string(),
+                    x: x as f64,
+                    y: y as f64,
+                    width: width as f64,
+                    height: height as f64,
+                    opacity: 1.0,
+                    topmost: true,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                });
             }
         }
+
+        Ok(id)
     }
-
-    // Enable layered window for opacity support
-    if let Some(w) = app.get_webview_window(&id) {
-        if let Ok(raw_hwnd) = w.hwnd() {
-            let hwnd = HWND(raw_hwnd.0);
-            unsafe {
-                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
-            }
-        }
-    }
-
-    // Also emit the event for backward compatibility
-    let _ = app.emit(
-        "pin-image",
-        serde_json::json!({
-            "id": id,
-            "image_base64": image_base64,
-        }),
-    );
-
-    Ok(id)
-}
 
 pub fn create_pin_window_at(
     app: AppHandle,
