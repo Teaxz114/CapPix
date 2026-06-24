@@ -119,26 +119,31 @@ function close() {
   visible.value = false;
 }
 
-function copyText(text: string) {
-  navigator.clipboard.writeText(text);
-}
-
-function copyAll() {
-  if (result.value?.text) {
-    navigator.clipboard.writeText(result.value.text);
+async function copyText(text: string) {
+  try {
+    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+    await writeText(text);
+  } catch (e) {
+    console.error("Copy text failed:", e);
   }
 }
 
-function copyBlocks() {
+async function copyAll() {
+  if (result.value?.text) {
+    await copyText(result.value.text);
+  }
+}
+
+async function copyBlocks() {
   if (result.value?.blocks) {
     const text = result.value.blocks.map((b, i) => `${i + 1}. ${b.text}`).join("\n");
-    navigator.clipboard.writeText(text);
+    await copyText(text);
   }
 }
 
-function copyTranslation() {
+async function copyTranslation() {
   if (translation.value?.translated) {
-    navigator.clipboard.writeText(translation.value.translated);
+    await copyText(translation.value.translated);
   }
 }
 

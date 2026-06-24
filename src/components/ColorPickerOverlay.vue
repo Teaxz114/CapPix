@@ -70,29 +70,44 @@ function onMouseMove(e: MouseEvent) {
     .catch(() => {});
 }
 
-function onPick() {
+async function onPick() {
   if (color.value) {
-    navigator.clipboard.writeText(color.value.hex);
+    await copyText(color.value.hex);
     saveHistoryColor(color.value.hex);
     emit("pick", color.value);
   }
   close();
 }
 
-function copyHistoryColor(hex: string) {
-  navigator.clipboard.writeText(hex);
+async function copyHistoryColor(hex: string) {
+  await copyText(hex);
+}
+
+async function copyText(text: string) {
+  try {
+    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+    await writeText(text);
+  } catch (e) {
+    console.error("Copy text failed:", e);
+  }
 }
 
 function close() {
   emit("close");
-  getCurrentWindow().close();
+  // Don't close the window — just emit close event for parent to handle
+}
+
+function onEscKey(e: KeyboardEvent) {
+  if (e.key === "Escape") close();
 }
 
 onMounted(() => {
   loadHistory();
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") close();
-  });
+  document.addEventListener("keydown", onEscKey);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("keydown", onEscKey);
 });
 </script>
 

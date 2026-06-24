@@ -74,9 +74,17 @@ onMounted(async () => {
   });
 
   // ESC to close
-  window.addEventListener("keydown", (e) => {
+  function onEscKey(e: KeyboardEvent) {
     if (e.key === "Escape") close();
-  });
+  }
+  window.addEventListener("keydown", onEscKey);
+
+  // Store cleanup reference
+  const originalUnlisten = unlisten;
+  unlisten = async () => {
+    if (originalUnlisten) await originalUnlisten();
+    window.removeEventListener("keydown", onEscKey);
+  };
 });
 
 onUnmounted(() => {

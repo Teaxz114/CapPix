@@ -310,10 +310,8 @@ onMounted(async () => {
 
   await fetchVirtualScreenOffset();
 
-  // Use both window and document for keyboard events
-  // Also add a click handler to ensure focus
+  // Use document for keyboard events (no need for both document + window)
   document.addEventListener("keydown", onKeyDown);
-  window.addEventListener("keydown", onKeyDown);
 
   // Ensure focus — try multiple times with delay
   try { await getCurrentWindow().setFocus(); } catch (_) {}
@@ -334,7 +332,6 @@ onUnmounted(() => {
   if (unlisten) unlisten();
   if (windowDetectTimer) clearTimeout(windowDetectTimer);
   document.removeEventListener("keydown", onKeyDown);
-  window.removeEventListener("keydown", onKeyDown);
 });
 
 function onKeyDown(e: KeyboardEvent) {
@@ -509,7 +506,8 @@ async function actionOcr() {
   try {
     const result = await invoke("ocr_image", { imageBase64: capturedBase64 });
     if (result && typeof result === "object" && "text" in result) {
-      await navigator.clipboard.writeText((result as any).text);
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText((result as any).text);
     }
   } catch (e) {
     console.error("OCR failed:", e);
@@ -559,15 +557,14 @@ function saveToHistory() {
 }
 
 async function navigateToAnnotate(imageBase64: string) {
-  // Store image data for the annotate view to pick up
   try {
     await invoke("open_annotate_window", { imageBase64 });
+    // Only navigate if invoke succeeded (data is stored in PendingAnnotateImage)
+    window.location.hash = '/annotate';
   } catch (e) {
     console.error("Failed to open annotate window:", e);
+    // Don't navigate — no image data available
   }
-  // Main window is already transformed by open_annotate_window (Rust side)
-  // Just need to navigate to annotate route
-  window.location.hash = '/annotate';
 }
 
 function updateMagnifier(x: number, y: number) {
