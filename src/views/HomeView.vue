@@ -154,13 +154,27 @@ async function startColorPicker() {
 
 async function pinFromClipboard() {
   try {
-    // Read clipboard image via Tauri clipboard plugin and create a pin window
-    const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
-    // For now, just open a blank pin as placeholder
-    // TODO: read image from clipboard and pass to create_pin_window
-    alert("贴图功能：请先截图后使用标注界面的贴图按钮。");
+    // Read image from clipboard via Tauri clipboard plugin
+    const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
+    const clipboardImage = await readImage();
+    const rgbaData = await clipboardImage.rgba();
+    const { width, height } = await clipboardImage.size();
+
+    // Convert RGBA to PNG via canvas, then to base64
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas not available");
+    const imgData = new ImageData(new Uint8ClampedArray(rgbaData), width, height);
+    ctx.putImageData(imgData, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+
+    await invoke("create_pin_window", { imageBase64: base64 });
   } catch (e) {
-    console.error("Pin failed:", e);
+    console.error("Pin from clipboard failed:", e);
+    alert("无法从剪贴板读取图片。请先复制一张图片再试。");
   }
 }
 

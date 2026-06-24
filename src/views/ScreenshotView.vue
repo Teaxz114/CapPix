@@ -521,9 +521,10 @@ async function actionOcr() {
 async function actionSave() {
   if (!capturedBase64) return;
   try {
-    // Lower the overlay window so save dialog is visible on top
+    // Exit fullscreen overlay mode so save dialog is visible
     const win = getCurrentWindow();
     await win.setAlwaysOnTop(false);
+    await win.setDecorations(true);
     await invoke("save_image_to_file", { imageBase64: capturedBase64 });
     saveToHistory();
   } catch (e) {

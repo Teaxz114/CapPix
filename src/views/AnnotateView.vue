@@ -490,7 +490,8 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     copyToClipboard();
   } else if (e.key === "Escape") {
-    getCurrentWindow().close();
+    // Don't close the main window — restore it and navigate back to home
+    restoreMainWindow();
   } else if (e.key === "Delete" || e.key === "Backspace") {
     if (fabricCanvas) {
       const active = fabricCanvas.getActiveObject();
@@ -553,6 +554,10 @@ async function saveToFile() {
   if (!fabricCanvas) return;
   setStatus("正在保存...");
   try {
+    // Lower window so save dialog is visible on top
+    const win = getCurrentWindow();
+    await win.setAlwaysOnTop(false);
+    await win.setDecorations(true);
     const base64 = exportCanvasBase64();
     await invoke("save_image_to_file", { imageBase64: base64 });
     setStatus("已保存");
@@ -610,6 +615,21 @@ function setStatus(msg: string) {
   setTimeout(() => {
     statusMessage.value = "";
   }, 2000);
+}
+
+async function restoreMainWindow() {
+  try {
+    const win = getCurrentWindow();
+    await win.setDecorations(true);
+    await win.setAlwaysOnTop(false);
+    await win.setResizable(true);
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    await win.setSize(new LogicalSize(800, 600));
+    await win.center();
+    window.location.hash = '/';
+  } catch (e) {
+    console.error("Failed to restore window:", e);
+  }
 }
 </script>
 

@@ -20,10 +20,21 @@ pub struct PinWindow {
 #[tauri::command]
 pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String, String> {
     let id = format!("pin-{}", uuid::Uuid::new_v4());
-    use tauri::WebviewWindowBuilder;
 
-    // Use App URL without hash fragment, then navigate via JS after creation
-    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
+    // Store pin data for PinView to pick up (same pattern as PendingScreenshot)
+    // We use emit since pin windows still need to be separate (they float on desktop)
+    // But we store the data first so the window can pull it after mount
+    if let Some(state) = app.try_state::<crate::commands::clipboard::PendingScreenshot>() {
+        // Reuse PendingScreenshot as a temporary data store for pin image
+        // This avoids the timing issue with emit events
+        if let Ok(mut data) = state.0.lock() {
+            *data = Some(image_base64.clone());
+        }
+    }
+
+    // Create the pin window — use the main window as a fallback if new window fails
+    use tauri::WebviewWindowBuilder;
+    match WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
@@ -31,23 +42,38 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
         .inner_size(400.0, 300.0)
         .center()
         .resizable(true)
-        .transparent(true)
         .build()
-        .map_err(|e| e.to_string())?;
-
-    // Navigate to the pin route with id parameter
-    let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
-
-    // Enable layered window for opacity support
-    if let Some(w) = app.get_webview_window(&id) {
-        let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
-        let hwnd = HWND(raw_hwnd.0);
-        unsafe {
-            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
+    {
+        Ok(window) => {
+            let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
+        }
+        Err(e) => {
+            log::warn!("Failed to create pin webview window: {}, using main window instead", e);
+            // Fallback: navigate main window to pin view
+            if let Some(main_win) = app.get_webview_window("main") {
+                let _ = main_win.set_decorations(false);
+                let _ = main_win.set_always_on_top(true);
+                let _ = main_win.set_size(tauri::LogicalSize::new(400.0, 300.0));
+                let _ = main_win.center();
+                let _ = main_win.show();
+                let _ = main_win.set_focus();
+                let _ = main_win.eval(&format!("window.location.hash = '/pin?id={}'", id));
+            }
         }
     }
 
+    // Enable layered window for opacity support
+    if let Some(w) = app.get_webview_window(&id) {
+        if let Ok(raw_hwnd) = w.hwnd() {
+            let hwnd = HWND(raw_hwnd.0);
+            unsafe {
+                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
+            }
+        }
+    }
+
+    // Also emit the event for backward compatibility
     let _ = app.emit(
         "pin-image",
         serde_json::json!({
@@ -70,8 +96,15 @@ pub fn create_pin_window_at(
     let id = format!("pin-{}", uuid::Uuid::new_v4());
     use tauri::WebviewWindowBuilder;
 
-    // Use App URL without hash fragment, then navigate via JS after creation
-    let window = WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
+    // Store pin data for PinView to pick up
+    if let Some(state) = app.try_state::<crate::commands::clipboard::PendingScreenshot>() {
+        if let Ok(mut data) = state.0.lock() {
+            *data = Some(image_base64.clone());
+        }
+    }
+
+    // Try creating a new webview window, fallback to main window
+    match WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App("index.html".into()))
         .title("CapPix Pin")
         .decorations(false)
         .always_on_top(true)
@@ -79,20 +112,33 @@ pub fn create_pin_window_at(
         .inner_size(width, height)
         .position(x, y)
         .resizable(true)
-        .transparent(true)
         .build()
-        .map_err(|e| e.to_string())?;
-
-    // Navigate to the pin route with id parameter
-    let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
+    {
+        Ok(window) => {
+            let _ = window.eval(&format!("window.location.hash = '/pin?id={}'", id));
+        }
+        Err(e) => {
+            log::warn!("Failed to create pin webview window at ({},{}): {}, using main window", x, y, e);
+            if let Some(main_win) = app.get_webview_window("main") {
+                let _ = main_win.set_decorations(false);
+                let _ = main_win.set_always_on_top(true);
+                let _ = main_win.set_size(tauri::LogicalSize::new(width, height));
+                let _ = main_win.set_position(tauri::LogicalPosition::new(x, y));
+                let _ = main_win.show();
+                let _ = main_win.set_focus();
+                let _ = main_win.eval(&format!("window.location.hash = '/pin?id={}'", id));
+            }
+        }
+    }
 
     // Enable layered window for opacity support
     if let Some(w) = app.get_webview_window(&id) {
-        let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
-        let hwnd = HWND(raw_hwnd.0);
-        unsafe {
-            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
+        if let Ok(raw_hwnd) = w.hwnd() {
+            let hwnd = HWND(raw_hwnd.0);
+            unsafe {
+                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
+            }
         }
     }
 

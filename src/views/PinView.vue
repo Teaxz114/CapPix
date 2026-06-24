@@ -58,7 +58,15 @@ const params = new URLSearchParams(queryString);
 pinId.value = params.get("id") || "";
 
 onMounted(async () => {
-  // Listen for the pin-image event carrying our image data
+  // Try to get image data from PendingScreenshot (stored by Rust before window creation)
+  try {
+    const pending = await invoke<string | null>("get_pending_screenshot");
+    if (pending) {
+      imageData.value = pending;
+    }
+  } catch (_) {}
+
+  // Also listen for the pin-image event carrying our image data
   unlisten = await listen<{ id: string; image_base64: string }>("pin-image", (event) => {
     if (event.payload.id === pinId.value) {
       imageData.value = event.payload.image_base64;
@@ -178,9 +186,28 @@ async function close() {
   try {
     // Delete from database so it won't be restored on next launch
     await invoke("pin_delete", { id: pinId.value });
+    // Try to close the pin-specific window (if it's a separate webview)
     await invoke("close_pin_window", { id: pinId.value });
-  } catch (_) {
-    await getCurrentWindow().close();
+  } catch (e) {
+    // If close_pin_window failed, we might be in main-window fallback mode
+    // Don't close the main window — just navigate back to home
+    const win = getCurrentWindow();
+    const label = win.label;
+    if (label === "main") {
+      // We're in the main window — restore and go home
+      try {
+        await win.setDecorations(true);
+        await win.setAlwaysOnTop(false);
+        await win.setResizable(true);
+        const { LogicalSize } = await import("@tauri-apps/api/dpi");
+        await win.setSize(new LogicalSize(800, 600));
+        await win.center();
+        window.location.hash = '/';
+      } catch (_) {}
+    } else {
+      // We're in a separate pin window — safe to close
+      await win.close();
+    }
   }
 }
 
