@@ -142,6 +142,7 @@ pub fn run() {
             commands::capture::get_windows,
             commands::capture::get_window_at_point,
             commands::hotkey::get_hotkeys,
+            commands::hotkey::set_hotkey,
             commands::clipboard::crop_image,
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::open_screenshot_overlay,
