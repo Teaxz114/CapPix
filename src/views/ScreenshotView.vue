@@ -344,7 +344,8 @@ function onKeyDown(e: KeyboardEvent) {
       hasSelection.value = false;
       capturedBase64 = "";
     } else {
-      getCurrentWindow().close();
+      // Restore main window to normal mode and navigate back to home
+      cancelCapture();
     }
   }
   // Enter key = confirm selection (go to annotate)
@@ -500,7 +501,7 @@ async function actionPin() {
     console.error("Pin failed:", e);
     return;
   }
-  await getCurrentWindow().close();
+  await restoreMainWindow();
 }
 
 async function actionOcr() {
@@ -514,7 +515,7 @@ async function actionOcr() {
     console.error("OCR failed:", e);
     return;
   }
-  await getCurrentWindow().close();
+  await restoreMainWindow();
 }
 
 async function actionSave() {
@@ -530,7 +531,7 @@ async function actionSave() {
     console.error("Save failed:", e);
     return;
   }
-  await getCurrentWindow().close();
+  await restoreMainWindow();
 }
 
 async function actionCopy() {
@@ -542,7 +543,7 @@ async function actionCopy() {
     console.error("Copy failed:", e);
     return;
   }
-  await getCurrentWindow().close();
+  await restoreMainWindow();
 }
 
 function saveToHistory() {
@@ -557,12 +558,15 @@ function saveToHistory() {
 }
 
 async function navigateToAnnotate(imageBase64: string) {
+  // Store image data for the annotate view to pick up
   try {
     await invoke("open_annotate_window", { imageBase64 });
   } catch (e) {
     console.error("Failed to open annotate window:", e);
   }
-  await getCurrentWindow().close();
+  // Main window is already transformed by open_annotate_window (Rust side)
+  // Just need to navigate to annotate route
+  window.location.hash = '/annotate';
 }
 
 function updateMagnifier(x: number, y: number) {
@@ -637,9 +641,25 @@ function ocrRegion() {
   if (screenshotData.value) invoke("ocr_image", { imageBase64: screenshotData.value });
 }
 
-function cancelCapture() {
+async function cancelCapture() {
   contextMenu.value = null;
-  getCurrentWindow().close();
+  await restoreMainWindow();
+}
+
+async function restoreMainWindow() {
+  // Restore main window from fullscreen overlay mode to normal mode
+  try {
+    const win = getCurrentWindow();
+    await win.setDecorations(true);
+    await win.setAlwaysOnTop(false);
+    await win.setResizable(true);
+    await win.setSize(new (await import("@tauri-apps/api/dpi")).LogicalSize(800, 600));
+    await win.center();
+    // Navigate back to home
+    window.location.hash = '/';
+  } catch (e) {
+    console.error("Failed to restore window:", e);
+  }
 }
 </script>
 
