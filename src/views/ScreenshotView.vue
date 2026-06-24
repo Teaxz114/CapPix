@@ -124,6 +124,9 @@
       </button>
     </div>
 
+    <!-- OCR Panel -->
+    <OcrPanel ref="ocrPanelRef" />
+
     <!-- Magnifier -->
     <div
       v-if="showMagnifier && screenshotData && !isSelecting && !hasSelection"
@@ -153,9 +156,11 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import OcrPanel from "../components/OcrPanel.vue";
 
 const overlayRef = ref<HTMLDivElement | null>(null);
 const magnifierCanvas = ref<HTMLCanvasElement | null>(null);
+const ocrPanelRef = ref<InstanceType<typeof OcrPanel> | null>(null);
 
 // Screenshot data
 const screenshotData = ref("");
@@ -503,17 +508,10 @@ async function actionPin() {
 
 async function actionOcr() {
   if (!capturedBase64) return;
-  try {
-    const result = await invoke("ocr_image", { imageBase64: capturedBase64 });
-    if (result && typeof result === "object" && "text" in result) {
-      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
-      await writeText((result as any).text);
-    }
-  } catch (e) {
-    console.error("OCR failed:", e);
-    return;
+  // Show OCR panel with results
+  if (ocrPanelRef.value) {
+    await ocrPanelRef.value.recognize(capturedBase64);
   }
-  await restoreMainWindow();
 }
 
 async function actionSave() {
@@ -636,7 +634,9 @@ function pickColor() {
 
 function ocrRegion() {
   contextMenu.value = null;
-  if (screenshotData.value) invoke("ocr_image", { imageBase64: screenshotData.value });
+  if (screenshotData.value && ocrPanelRef.value) {
+    ocrPanelRef.value.recognize(screenshotData.value);
+  }
 }
 
 async function cancelCapture() {

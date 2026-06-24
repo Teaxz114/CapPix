@@ -26,41 +26,82 @@ pub struct TranslateResult {
     pub target_lang: String,
 }
 
-#[tauri::command]
-pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<OcrResult, String> {
-    let python = find_python().ok_or("Python not found")?;
+/// OCR worker executable — tries in order:
+/// 1. Bundled cappix_ocr.exe (PyInstaller standalone, no Python needed)
+/// 2. Python + ocr_worker.py (dev mode, requires Python + rapidocr)
+fn find_ocr_worker(app: &tauri::AppHandle) -> Result<(String, Vec<String>), String> {
+    let exe_dir = std::env::current_exe()
+        .map(|e| e.parent().map(|p| p.to_path_buf()).unwrap_or_default())
+        .unwrap_or_default();
 
-    let script_path = app
-        .path()
-        .resource_dir()
-        .map(|d| d.join("scripts").join("ocr_worker.py"))
-        .unwrap_or_else(|_| {
-            std::path::PathBuf::from("../scripts/ocr_worker.py")
-        });
+    // Search paths for cappix_ocr.exe (relative to main EXE)
+    let bundled_candidates = vec![
+        exe_dir.join("cappix_ocr.exe"),
+        exe_dir.join("scripts").join("cappix_ocr.exe"),
+        exe_dir.join("..").join("scripts").join("cappix_ocr.exe"),
+    ];
 
-    let script_path = if script_path.exists() {
-        script_path
-    } else {
-        let exe_dir = std::env::current_exe()
-            .map(|e| e.parent().map(|p| p.to_path_buf()).unwrap_or_default())
-            .unwrap_or_default();
-        let candidate = exe_dir.join("../scripts/ocr_worker.py");
+    for candidate in &bundled_candidates {
         if candidate.exists() {
-            candidate
-        } else {
-            std::path::PathBuf::from("scripts/ocr_worker.py")
+            log::info!("[OCR] Found bundled worker: {:?}", candidate);
+            return Ok((candidate.to_string_lossy().to_string(), vec![]));
         }
-    };
-
-    if !script_path.exists() {
-        return Err(format!("OCR worker script not found: {:?}", script_path));
     }
 
-    let mut child = tokio::process::Command::new(&python)
-        .arg(&script_path)
-        .stdin(Stdio::piped())
+    // Also try resource_dir (for cargo tauri build)
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let candidate = resource_dir.join("scripts").join("cappix_ocr.exe");
+        if candidate.exists() {
+            log::info!("[OCR] Found bundled worker in resources: {:?}", candidate);
+            return Ok((candidate.to_string_lossy().to_string(), vec![]));
+        }
+    }
+
+    // Fallback: Python + ocr_worker.py (dev mode)
+    if let Some(python) = find_python() {
+        let script_candidates = vec![
+            exe_dir.join("scripts").join("ocr_worker.py"),
+            exe_dir.join("..").join("scripts").join("ocr_worker.py"),
+        ];
+
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            let mut with_resource = script_candidates;
+            with_resource.push(resource_dir.join("scripts").join("ocr_worker.py"));
+            for candidate in &with_resource {
+                if candidate.exists() {
+                    log::info!("[OCR] Using Python worker: {:?} {:?}", python, candidate);
+                    return Ok((python, vec![candidate.to_string_lossy().to_string()]));
+                }
+            }
+        } else {
+            for candidate in &script_candidates {
+                if candidate.exists() {
+                    log::info!("[OCR] Using Python worker: {:?} {:?}", python, candidate);
+                    return Ok((python, vec![candidate.to_string_lossy().to_string()]));
+                }
+            }
+        }
+    }
+
+    Err("OCR worker not found. Install cappix_ocr.exe or Python + rapidocr_onnxruntime".to_string())
+}
+
+#[tauri::command]
+pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<OcrResult, String> {
+    let (program, args) = find_ocr_worker(&app)?;
+
+    log::info!("[OCR] Spawning: {} {:?}", program, args);
+
+    let mut cmd = tokio::process::Command::new(&program);
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    for arg in &args {
+        cmd.arg(arg);
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn OCR process: {}", e))?;
 
@@ -86,8 +127,11 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
         return Err(format!("OCR process error: {}", stderr));
     }
 
-    let result: OcrResult =
-        serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse OCR result: {}", e))?;
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let result: OcrResult = serde_json::from_str(stdout_str.trim())
+        .map_err(|e| format!("Failed to parse OCR result: {} (raw: {})", e, &stdout_str[..stdout_str.len().min(200)]))?;
+
+    log::info!("[OCR] Result: {} blocks, elapsed: {:?}s", result.blocks.len(), result.elapsed);
 
     Ok(result)
 }

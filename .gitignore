@@ -18,3 +18,12 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# PyInstaller build artifacts
+scripts/build/
+scripts/dist/
+scripts/bin/
+*.spec
+
+# Dev copies of OCR worker
+cappix_ocr.exe
