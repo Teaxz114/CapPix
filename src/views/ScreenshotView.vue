@@ -131,6 +131,7 @@
     <div
       v-if="showMagnifier && screenshotData && !isSelecting && !hasSelection"
       class="magnifier"
+      :class="{ 'color-picker-mode': colorPickerMode }"
       :style="{
         left: magnifierX + 'px',
         top: magnifierY + 'px',
@@ -140,13 +141,19 @@
       <div class="magnifier-crosshair"></div>
       <div class="magnifier-color" v-if="pixelColor">
         <span class="color-swatch" :style="{ background: pixelColor }"></span>
-        {{ pixelColor }}
+        {{ colorPickerMode ? formattedColor() : pixelColor }}
+        <span v-if="colorPickerMode" class="color-format-hint">{{ colorFormat.toUpperCase() }} · 右键切换 · 点击复制</span>
       </div>
     </div>
 
     <!-- Hint text -->
     <div v-if="!isSelecting && !hasSelection" class="hint-text">
-      拖拽选择区域 · 点击窗口智能识别 · 双击全屏截图 · ESC 取消
+      <template v-if="colorPickerMode">
+        🎨 取色模式 · 点击复制颜色 · 右键切换格式(HEX/RGB/HSL) · ESC 退出
+      </template>
+      <template v-else>
+        拖拽选择区域 · 点击窗口智能识别 · 双击全屏截图 · ESC 取消
+      </template>
     </div>
   </div>
 </template>
@@ -182,6 +189,8 @@ const showMagnifier = ref(true);
 const cursorX = ref(0);
 const cursorY = ref(0);
 const pixelColor = ref("");
+const colorPickerMode = ref(false);
+const colorFormat = ref<"hex" | "rgb" | "hsl">("hex");
 
 // Window detection state
 interface WindowRegion {
@@ -341,6 +350,12 @@ onUnmounted(() => {
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === "Escape") {
+    // Exit color picker mode first
+    if (colorPickerMode.value) {
+      colorPickerMode.value = false;
+      colorFormat.value = "hex";
+      return;
+    }
     if (hasSelection.value) {
       // Cancel selection, go back to overlay mode
       hasSelection.value = false;
@@ -359,6 +374,13 @@ function onKeyDown(e: KeyboardEvent) {
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return;
   contextMenu.value = null;
+
+  // Color picker mode: left click confirms color pick
+  if (colorPickerMode.value) {
+    e.preventDefault();
+    confirmColorPick();
+    return;
+  }
 
   // If we have a selection with toolbar showing, don't start new selection
   // unless clicking outside the current selection area
@@ -598,6 +620,12 @@ function updateMagnifier(x: number, y: number) {
 }
 
 function onContextMenu(e: MouseEvent) {
+  // In color picker mode, right click cycles color format
+  if (colorPickerMode.value) {
+    e.preventDefault();
+    cycleColorFormat();
+    return;
+  }
   contextMenu.value = { x: e.clientX, y: e.clientY };
 }
 
@@ -630,6 +658,66 @@ function captureFullscreen() {
 
 function pickColor() {
   contextMenu.value = null;
+  colorPickerMode.value = true;
+}
+
+/** Convert hex color to RGB string */
+function hexToRgb(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** Convert hex color to HSL string */
+function hexToHsl(hex: string): string {
+  let r = parseInt(hex.slice(1, 3), 16) / 255;
+  let g = parseInt(hex.slice(3, 5), 16) / 255;
+  let b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+  }
+  return `hsl(${Math.round(h * 360)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+}
+
+/** Get formatted color string based on current format */
+function formattedColor(): string {
+  if (!pixelColor.value) return "";
+  switch (colorFormat.value) {
+    case "rgb": return hexToRgb(pixelColor.value);
+    case "hsl": return hexToHsl(pixelColor.value);
+    default: return pixelColor.value;
+  }
+}
+
+/** Cycle color format on click in picker mode */
+function cycleColorFormat() {
+  colorFormat.value = colorFormat.value === "hex" ? "rgb" : colorFormat.value === "rgb" ? "hsl" : "hex";
+}
+
+/** Copy current color and exit picker mode */
+async function confirmColorPick() {
+  if (pixelColor.value) {
+    const text = formattedColor();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback: Tauri clipboard plugin
+      try {
+        const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+        await writeText(text);
+      } catch { /* ignore */ }
+    }
+  }
+  colorPickerMode.value = false;
+  colorFormat.value = "hex";
 }
 
 function ocrRegion() {
@@ -854,6 +942,24 @@ async function restoreMainWindow() {
   border: 1px solid #666;
   border-radius: 2px;
   display: inline-block;
+}
+.magnifier.color-picker-mode canvas {
+  border-color: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+}
+.magnifier.color-picker-mode .magnifier-crosshair {
+  border-color: #f59e0b;
+}
+.color-picker-mode .magnifier-color {
+  background: #78350f;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 4px 8px;
+}
+.color-format-hint {
+  color: #fbbf24;
+  font-size: 8px;
+  opacity: 0.8;
 }
 .hint-text {
   position: fixed;
