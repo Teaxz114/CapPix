@@ -109,6 +109,8 @@ pub fn crop_image(
 
 #[tauri::command]
 pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    log::info!("open_screenshot_overlay called — reusing main window");
+    
     // Reuse the main window instead of creating a new webview window.
     // Creating new windows via WebviewWindowBuilder causes Edge to open because
     // the URL resolution (both App and CustomProtocol variants) fails to properly
@@ -116,6 +118,8 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     // The main window is already correctly initialized with Tauri's protocol.
     let window = app.get_webview_window("main")
         .ok_or("Main window not found")?;
+
+    log::info!("Got main window, transforming to overlay mode");
 
     // Transform main window into fullscreen overlay mode
     let monitor = app
@@ -132,14 +136,21 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let _ = window.show();
     let _ = window.set_focus();
 
+    log::info!("Window transformed, navigating to /screenshot via eval");
+
     // Navigate to screenshot route via JS (main window already has Vue Router)
-    let _ = window.eval("window.location.hash = '/screenshot'");
+    let eval_result = window.eval("window.location.hash = '/screenshot'");
+    match eval_result {
+        Ok(_) => log::info!("eval succeeded — hash set to /screenshot"),
+        Err(e) => log::error!("eval FAILED: {}", e),
+    }
 
     Ok(())
 }
 
 #[tauri::command]
 pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+    log::info!("trigger_capture called with mode: {}", mode);
     match mode.as_str() {
         "capture_region" | "capture_window" => {
             match crate::capture::screen::capture_screen(0) {

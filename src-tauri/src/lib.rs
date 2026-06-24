@@ -78,6 +78,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.listen("hotkey", move |event| {
                 let payload = event.payload().to_string();
+                log::info!("Hotkey event received: {}", payload);
 
                 if payload.contains("capture_region") {
                     let app = app_handle.clone();
