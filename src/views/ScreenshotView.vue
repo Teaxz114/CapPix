@@ -635,12 +635,10 @@ async function saveToHistory() {
 
 async function navigateToAnnotate(imageBase64: string) {
   try {
+    // open_annotate_window will close this overlay and open annotate in main window
     await invoke("open_annotate_window", { imageBase64 });
-    // Only navigate if invoke succeeded (data is stored in PendingAnnotateImage)
-    window.location.hash = '/annotate';
   } catch (e) {
     console.error("Failed to open annotate window:", e);
-    // Don't navigate — no image data available
   }
 }
 
@@ -877,18 +875,13 @@ async function cancelCapture() {
 }
 
 async function restoreMainWindow() {
-  // Restore main window from fullscreen overlay mode to normal mode
+  // Screenshot now runs in a dedicated overlay window — just close it.
+  // The main window is untouched and stays in its normal state.
   try {
     const win = getCurrentWindow();
-    await win.setDecorations(true);
-    await win.setAlwaysOnTop(false);
-    await win.setResizable(true);
-    await win.setSize(new (await import("@tauri-apps/api/dpi")).LogicalSize(800, 600));
-    await win.center();
-    // Navigate back to home
-    window.location.hash = '/';
+    await win.close();
   } catch (e) {
-    console.error("Failed to restore window:", e);
+    console.error("Failed to close screenshot overlay:", e);
   }
 }
 </script>

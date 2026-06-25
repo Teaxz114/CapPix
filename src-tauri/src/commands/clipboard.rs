@@ -109,19 +109,20 @@ pub fn crop_image(
 
 #[tauri::command]
 pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
-    log::info!("open_screenshot_overlay called — reusing main window");
-    
-    // Reuse the main window instead of creating a new webview window.
-    // Creating new windows via WebviewWindowBuilder causes Edge to open because
-    // the URL resolution (both App and CustomProtocol variants) fails to properly
-    // register with Tauri's custom protocol handler in the new webview.
-    // The main window is already correctly initialized with Tauri's protocol.
-    let window = app.get_webview_window("main")
-        .ok_or("Main window not found")?;
+    log::info!("open_screenshot_overlay called — creating dedicated overlay window");
 
-    log::info!("Got main window, transforming to overlay mode");
+    // Like PixPin: create a dedicated overlay window instead of reusing the main window.
+    // Reusing main window requires aggressive window manipulation (set_decorations,
+    // set_always_on_top, resize) which can destabilize WebView2 and cause chrome-error.
+    // A separate window is clean — close it when done, main window is untouched.
 
-    // Transform main window into fullscreen overlay mode
+    // Close existing overlay if any
+    if let Some(existing) = app.get_webview_window("screenshot-overlay") {
+        let _ = existing.close();
+        // Give WebView2 a moment to clean up
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
     let monitor = app
         .primary_monitor()
         .map_err(|e| e.to_string())?
@@ -129,20 +130,30 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let pos = monitor.position();
     let size = monitor.size();
 
-    let _ = window.set_decorations(false);
-    let _ = window.set_always_on_top(true);
-    let _ = window.set_size(tauri::LogicalSize::new(size.width as f64, size.height as f64));
-    let _ = window.set_position(tauri::LogicalPosition::new(pos.x as f64, pos.y as f64));
-    let _ = window.show();
-    let _ = window.set_focus();
+    use tauri::{WebviewWindowBuilder, WebviewUrl};
 
-    log::info!("Window transformed, navigating to /screenshot via eval+router");
+    // Use WebviewUrl::App("index.html") — Tauri resolves this to the bundled
+    // custom protocol URL automatically. The hash fragment routes to /screenshot.
+    // This is the same approach as the Tauri docs example.
+    let url = WebviewUrl::App("index.html#/screenshot".into());
 
-    // Use eval with router.push — window.location.hash doesn't trigger Vue Router,
-    // and app.emit events can arrive before the window finishes resizing
-    let _ = window.eval(
-        "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/screenshot'); } })()"
-    );
+    let overlay = WebviewWindowBuilder::new(&app, "screenshot-overlay", url)
+        .title("CapPix Screenshot")
+        .decorations(false)
+        .always_on_top(true)
+        .transparent(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .inner_size(size.width as f64, size.height as f64)
+        .position(pos.x as f64, pos.y as f64)
+        .focused(true)
+        .build()
+        .map_err(|e| format!("Failed to create overlay window: {}", e))?;
+
+    log::info!("Screenshot overlay window created successfully");
+
+    let _ = overlay.show();
+    let _ = overlay.set_focus();
 
     Ok(())
 }
@@ -179,18 +190,10 @@ pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String
 
 #[tauri::command]
 pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Result<(), String> {
-    // Reuse the main window — same reason as open_screenshot_overlay
-    let window = app.get_webview_window("main")
-        .ok_or("Main window not found")?;
-
-    // Restore window to normal mode (in case coming from screenshot overlay)
-    let _ = window.set_decorations(true);
-    let _ = window.set_always_on_top(false);
-    let _ = window.set_resizable(true);
-    let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
-    let _ = window.center();
-    let _ = window.show();
-    let _ = window.set_focus();
+    // Close screenshot overlay if open
+    if let Some(overlay) = app.get_webview_window("screenshot-overlay") {
+        let _ = overlay.close();
+    }
 
     // Store image data for the frontend to pick up
     if let Some(state) = app.try_state::<PendingAnnotateImage>() {
@@ -198,6 +201,19 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
             *data = Some(image_base64);
         }
     }
+
+    // Reuse main window for annotate — it's a normal window (no aggressive manipulation needed)
+    let window = app.get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    // Ensure main window is in normal state
+    let _ = window.set_decorations(true);
+    let _ = window.set_always_on_top(false);
+    let _ = window.set_resizable(true);
+    let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
+    let _ = window.center();
+    let _ = window.show();
+    let _ = window.set_focus();
 
     // Navigate to annotate route via eval+router
     let _ = window.eval(
