@@ -75,11 +75,18 @@
         width: selectionW + 'px',
         height: selectionH + 'px',
       }"
+      @mousedown.stop="onSelectionMouseDown($event)"
     >
-      <span class="handle handle-tl"></span>
-      <span class="handle handle-tr"></span>
-      <span class="handle handle-bl"></span>
-      <span class="handle handle-br"></span>
+      <!-- 4 corner handles -->
+      <span class="handle handle-tl" data-handle="tl"></span>
+      <span class="handle handle-tr" data-handle="tr"></span>
+      <span class="handle handle-bl" data-handle="bl"></span>
+      <span class="handle handle-br" data-handle="br"></span>
+      <!-- 4 edge midpoint handles -->
+      <span class="handle handle-tm" data-handle="tm"></span>
+      <span class="handle handle-bm" data-handle="bm"></span>
+      <span class="handle handle-ml" data-handle="ml"></span>
+      <span class="handle handle-mr" data-handle="mr"></span>
     </div>
 
     <!-- Dimension info -->
@@ -191,6 +198,16 @@ const cursorY = ref(0);
 const pixelColor = ref("");
 const colorPickerMode = ref(false);
 const colorFormat = ref<"hex" | "rgb" | "hsl">("hex");
+
+// Selection resize/move state
+type HandleId = "tl" | "tr" | "bl" | "br" | "tm" | "bm" | "ml" | "mr" | "move" | null;
+const activeHandle = ref<HandleId>(null);
+const dragStartX = ref(0);
+const dragStartY = ref(0);
+const dragStartSelX = ref(0);
+const dragStartSelY = ref(0);
+const dragStartEndX = ref(0);
+const dragStartEndY = ref(0);
 
 // Window detection state
 interface WindowRegion {
@@ -382,8 +399,7 @@ function onMouseDown(e: MouseEvent) {
     return;
   }
 
-  // If we have a selection with toolbar showing, don't start new selection
-  // unless clicking outside the current selection area
+  // If we have a selection with toolbar showing, start move/resize
   if (hasSelection.value) {
     const sx = selectionX.value;
     const sy = selectionY.value;
@@ -393,8 +409,11 @@ function onMouseDown(e: MouseEvent) {
       e.clientX >= sx && e.clientX <= sx + sw &&
       e.clientY >= sy && e.clientY <= sy + sh;
     if (insideSelection) {
-      return; // Don't reset selection when clicking inside it
+      // Start moving the selection
+      startSelectionDrag(e, "move");
+      return;
     }
+    // Click outside selection — start new selection
   }
 
   isSelecting.value = true;
@@ -417,6 +436,12 @@ function onMouseMove(e: MouseEvent) {
   cursorX.value = e.clientX;
   cursorY.value = e.clientY;
 
+  // Handle selection drag (move or resize)
+  if (activeHandle.value) {
+    handleSelectionDrag(e);
+    return;
+  }
+
   if (isSelecting.value) {
     endX.value = e.clientX;
     endY.value = e.clientY;
@@ -428,6 +453,12 @@ function onMouseMove(e: MouseEvent) {
 }
 
 function onMouseUp(e: MouseEvent) {
+  // End selection drag (move or resize)
+  if (activeHandle.value) {
+    endSelectionDrag();
+    return;
+  }
+
   if (!isSelecting.value) return;
   isSelecting.value = false;
   endX.value = e.clientX;
@@ -617,6 +648,93 @@ function updateMagnifier(x: number, y: number) {
     const pixel = ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data;
     pixelColor.value = `#${pixel[0].toString(16).padStart(2, "0")}${pixel[1].toString(16).padStart(2, "0")}${pixel[2].toString(16).padStart(2, "0")}`;
   } catch { pixelColor.value = ""; }
+}
+
+/** Start dragging a selection handle or moving the selection */
+function onSelectionMouseDown(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  const handleId = target.dataset.handle as HandleId;
+  if (handleId) {
+    e.preventDefault();
+    startSelectionDrag(e, handleId);
+  }
+}
+
+function startSelectionDrag(e: MouseEvent, handle: HandleId) {
+  activeHandle.value = handle;
+  dragStartX.value = e.clientX;
+  dragStartY.value = e.clientY;
+  // Store original startX/Y and endX/Y (these are the raw refs, not computed)
+  dragStartSelX.value = startX.value;
+  dragStartSelY.value = startY.value;
+  dragStartEndX.value = endX.value;
+  dragStartEndY.value = endY.value;
+  showMagnifier.value = false;
+}
+
+function handleSelectionDrag(e: MouseEvent) {
+  const dx = e.clientX - dragStartX.value;
+  const dy = e.clientY - dragStartY.value;
+  const handle = activeHandle.value;
+  if (!handle) return;
+
+  const sx = dragStartSelX.value;
+  const sy = dragStartSelY.value;
+  const ex = dragStartEndX.value;
+  const ey = dragStartEndY.value;
+
+  switch (handle) {
+    case "move":
+      startX.value = sx + dx;
+      startY.value = sy + dy;
+      endX.value = ex + dx;
+      endY.value = ey + dy;
+      break;
+    case "tl":
+      startX.value = Math.min(sx + dx, ex - 10);
+      startY.value = Math.min(sy + dy, ey - 10);
+      break;
+    case "tr":
+      endX.value = Math.max(ex + dx, sx + 10);
+      startY.value = Math.min(sy + dy, ey - 10);
+      break;
+    case "bl":
+      startX.value = Math.min(sx + dx, ex - 10);
+      endY.value = Math.max(ey + dy, sy + 10);
+      break;
+    case "br":
+      endX.value = Math.max(ex + dx, sx + 10);
+      endY.value = Math.max(ey + dy, sy + 10);
+      break;
+    case "tm":
+      startY.value = Math.min(sy + dy, ey - 10);
+      break;
+    case "bm":
+      endY.value = Math.max(ey + dy, sy + 10);
+      break;
+    case "ml":
+      startX.value = Math.min(sx + dx, ex - 10);
+      break;
+    case "mr":
+      endX.value = Math.max(ex + dx, sx + 10);
+      break;
+  }
+}
+
+function endSelectionDrag() {
+  activeHandle.value = null;
+  // Re-capture the new selection region
+  const w = selectionW.value;
+  const h = selectionH.value;
+  if (w >= 5 && h >= 5) {
+    doCaptureRegion(
+      selectionX.value + virtualScreenOffsetX,
+      selectionY.value + virtualScreenOffsetY,
+      w,
+      h,
+      false
+    );
+  }
 }
 
 function onContextMenu(e: MouseEvent) {
@@ -825,8 +943,8 @@ async function restoreMainWindow() {
 .selection-border {
   position: fixed;
   border: 2px solid #3b82f6;
-  pointer-events: none;
   z-index: 10;
+  cursor: move;
 }
 
 .handle {
@@ -835,11 +953,16 @@ async function restoreMainWindow() {
   background: #3b82f6;
   border: 1px solid white;
   border-radius: 1px;
+  z-index: 11;
 }
-.handle-tl { top: -4px; left: -4px; }
-.handle-tr { top: -4px; right: -4px; }
-.handle-bl { bottom: -4px; left: -4px; }
-.handle-br { bottom: -4px; right: -4px; }
+.handle-tl { top: -4px; left: -4px; cursor: nwse-resize; }
+.handle-tr { top: -4px; right: -4px; cursor: nesw-resize; }
+.handle-bl { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.handle-br { bottom: -4px; right: -4px; cursor: nwse-resize; }
+.handle-tm { top: -4px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.handle-bm { bottom: -4px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.handle-ml { top: 50%; left: -4px; transform: translateY(-50%); cursor: ew-resize; }
+.handle-mr { top: 50%; right: -4px; transform: translateY(-50%); cursor: ew-resize; }
 
 .selection-info {
   position: fixed;
