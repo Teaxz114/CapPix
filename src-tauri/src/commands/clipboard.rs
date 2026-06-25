@@ -136,14 +136,13 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let _ = window.show();
     let _ = window.set_focus();
 
-    log::info!("Window transformed, navigating to /screenshot via eval");
+    log::info!("Window transformed, navigating to /screenshot via eval+router");
 
-    // Navigate to screenshot route via JS (main window already has Vue Router)
-    let eval_result = window.eval("window.location.hash = '/screenshot'");
-    match eval_result {
-        Ok(_) => log::info!("eval succeeded — hash set to /screenshot"),
-        Err(e) => log::error!("eval FAILED: {}", e),
-    }
+    // Use eval with router.push — window.location.hash doesn't trigger Vue Router,
+    // and app.emit events can arrive before the window finishes resizing
+    let _ = window.eval(
+        "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/screenshot'); } })()"
+    );
 
     Ok(())
 }
@@ -200,8 +199,10 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
         }
     }
 
-    // Navigate to annotate route
-    let _ = window.eval("window.location.hash = '/annotate'");
+    // Navigate to annotate route via eval+router
+    let _ = window.eval(
+        "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/annotate'); } })()"
+    );
 
     Ok(())
 }

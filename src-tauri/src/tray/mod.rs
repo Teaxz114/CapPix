@@ -69,14 +69,14 @@ pub fn setup_tray(app: &App) -> anyhow::Result<()> {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
-                    // Navigate to the right page
                     let route = if event.id.as_ref() == "history" {
                         "history"
                     } else {
                         "settings"
                     };
+                    // Use router.push — window.location.hash doesn't trigger Vue Router
                     let _ = window.eval(&format!(
-                        "window.location.hash = '/{}'",
+                        "(() => {{ const a = document.querySelector('#app').__vue_app__; if(a) {{ a.config.globalProperties.$router.push('/{}'); }} }})()",
                         route
                     ));
                 }

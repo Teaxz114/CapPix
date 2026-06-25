@@ -3,17 +3,37 @@
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted } from "vue";
+import { watch, onMounted, onUnmounted } from "vue";
+import { useRouter } from "vue-router";
 import { useConfigStore } from "./stores/config";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 const configStore = useConfigStore();
+const router = useRouter();
+let unlisten: UnlistenFn | null = null;
 
 function applyTheme(theme: "dark" | "light") {
   document.documentElement.setAttribute("data-theme", theme);
 }
 
-onMounted(() => {
+onMounted(async () => {
   applyTheme(configStore.config.theme);
+
+  // Listen for navigate events from Rust backend
+  // (window.location.hash change doesn't trigger Vue Router in Tauri webview)
+  unlisten = await listen<string>("navigate", (event) => {
+    const route = event.payload;
+    console.log(`[Navigate] Received navigate event, payload:`, route, typeof route);
+    router.push(`/${route}`).then(() => {
+      console.log(`[Navigate] Successfully navigated to /${route}`);
+    }).catch((e) => {
+      console.error(`[Navigate] Navigation failed:`, e);
+    });
+  });
+});
+
+onUnmounted(() => {
+  unlisten?.();
 });
 
 watch(() => configStore.config.theme, (newTheme) => {
