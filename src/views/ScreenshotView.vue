@@ -339,6 +339,21 @@ onMounted(async () => {
     console.error("Failed to listen for screenshot-ready:", e);
   }
 
+  // Listen for activate-color-picker event (from HomeView color picker button)
+  try {
+    const unlistenColorPicker = await listen("activate-color-picker", () => {
+      colorPickerMode.value = true;
+    });
+    // Combine with existing unlisten
+    const originalUnlisten = unlisten;
+    unlisten = async () => {
+      if (originalUnlisten) await originalUnlisten();
+      await unlistenColorPicker();
+    };
+  } catch (e) {
+    console.error("Failed to listen for activate-color-picker:", e);
+  }
+
   await fetchVirtualScreenOffset();
 
   // Use document for keyboard events (no need for both document + window)
@@ -596,14 +611,25 @@ async function actionCopy() {
   await restoreMainWindow();
 }
 
-function saveToHistory() {
+async function saveToHistory() {
   if (!capturedBase64) return;
+  // Run OCR to populate ocr_text field before saving to history
+  let ocrText: string | null = null;
+  try {
+    const result = await invoke<{ text: string; blocks: unknown[]; elapsed?: number; error?: string }>("ocr_image", { imageBase64: capturedBase64 });
+    if (!result.error && result.text) {
+      ocrText = result.text;
+    }
+  } catch (e) {
+    // OCR is optional — continue with null ocr_text if it fails
+    console.warn("OCR failed during history save:", e);
+  }
   invoke("history_save", {
     imageBase64: capturedBase64,
     width: Math.round(selectionW.value),
     height: Math.round(selectionH.value),
     source: "region",
-    ocrText: null,
+    ocrText: ocrText,
   }).catch((e) => console.error("History save failed:", e));
 }
 
