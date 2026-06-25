@@ -79,11 +79,18 @@ onMounted(async () => {
   }
   window.addEventListener("keydown", onEscKey);
 
+  // Persist pin position after drag (data-tauri-drag-region handles the drag natively)
+  function onMouseUp() {
+    persistPinPosition();
+  }
+  window.addEventListener("mouseup", onMouseUp);
+
   // Store cleanup reference
   const originalUnlisten = unlisten;
   unlisten = async () => {
     if (originalUnlisten) await originalUnlisten();
     window.removeEventListener("keydown", onEscKey);
+    window.removeEventListener("mouseup", onMouseUp);
   };
 });
 
@@ -216,6 +223,23 @@ async function close() {
       // We're in a separate pin window — safe to close
       await win.close();
     }
+  }
+}
+
+// Persist pin position to database after drag
+async function persistPinPosition() {
+  if (!pinId.value) return;
+  try {
+    const win = getCurrentWindow();
+    const position = await win.outerPosition();
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    // Convert physical to logical position
+    const scaleFactor = await win.scaleFactor();
+    const x = position.x / scaleFactor;
+    const y = position.y / scaleFactor;
+    await invoke("pin_update_position", { id: pinId.value, x, y });
+  } catch (e) {
+    console.error("Failed to persist pin position:", e);
   }
 }
 
