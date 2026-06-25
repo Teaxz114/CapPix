@@ -9,6 +9,8 @@ export interface AppConfig {
   defaultFontSize: number;
   // Mosaic
   mosaicBlockSize: number;
+  // Blur
+  blurRadius: number;
   // Save
   saveQuality: number; // 1-100
   saveFormat: "png" | "jpg" | "bmp";
@@ -31,6 +33,7 @@ const defaultConfig: AppConfig = {
   defaultFontFamily: "Microsoft YaHei",
   defaultFontSize: 20,
   mosaicBlockSize: 10,
+  blurRadius: 12,
   saveQuality: 100,
   saveFormat: "png",
   autoCopyToClipboard: true,

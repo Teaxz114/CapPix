@@ -166,6 +166,11 @@ const tools = [
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',
   },
   {
+    id: "blur",
+    name: "模糊",
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.3"/><circle cx="12" cy="12" r="6" fill="currentColor" opacity="0.15"/><circle cx="12" cy="12" r="9" fill="currentColor" opacity="0.08"/></svg>',
+  },
+  {
     id: "highlighter",
     name: "荧光笔",
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2l4 4-12 12H6v-4L18 2z"/><rect x="2" y="20" width="10" height="2" fill="currentColor" opacity="0.3"/></svg>',

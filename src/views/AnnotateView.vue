@@ -37,7 +37,7 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush, Group } from "fabric";
+import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush, Group, Image as FabricImage } from "fabric";
 import Toolbar from "../components/Toolbar.vue";
 import OcrPanel from "../components/OcrPanel.vue";
 import CanvasComponent from "../components/Canvas.vue";
@@ -271,6 +271,23 @@ function onMouseDown(opt: any) {
     return;
   }
 
+  if (currentTool.value === "blur") {
+    // Blur: draw a semi-transparent rect as placeholder
+    const rect = new Rect({
+      left: pointer.x,
+      top: pointer.y,
+      width: 0,
+      height: 0,
+      fill: "rgba(128,128,128,0.5)",
+      stroke: "rgba(100,149,237,0.8)",
+      strokeWidth: 1,
+      selectable: true,
+    });
+    activeObject = rect;
+    fabricCanvas.add(rect);
+    return;
+  }
+
   // Shape tools
   if (currentTool.value === "rect") {
     const rect = new Rect({
@@ -324,7 +341,7 @@ function onMouseMove(opt: any) {
   if (!fabricCanvas || !isDrawing || !activeObject) return;
   const pointer = fabricCanvas.getScenePoint(opt.e);
 
-  if (currentTool.value === "rect" || currentTool.value === "mosaic") {
+  if (currentTool.value === "rect" || currentTool.value === "mosaic" || currentTool.value === "blur") {
     const left = Math.min(startX, pointer.x);
     const top = Math.min(startY, pointer.y);
     const width = Math.abs(pointer.x - startX);
@@ -350,6 +367,11 @@ function onMouseUp() {
   // Apply mosaic pixelation if needed
   if (currentTool.value === "mosaic" && activeObject) {
     applyMosaic(activeObject as Rect);
+  }
+
+  // Apply Gaussian blur if needed
+  if (currentTool.value === "blur" && activeObject) {
+    applyBlur(activeObject as Rect);
   }
 
   // Convert arrow Line to Line+Triangle Group
@@ -474,6 +496,72 @@ function applyMosaic(rect: Rect) {
   }
 
   fabricCanvas.renderAll();
+}
+
+function applyBlur(rect: Rect) {
+  if (!fabricCanvas) return;
+  const blurRadius = configStore.config.blurRadius || 12;
+  const left = rect.left || 0;
+  const top = rect.top || 0;
+  const width = rect.width || 0;
+  const height = rect.height || 0;
+
+  if (width < 2 || height < 2) {
+    fabricCanvas.remove(rect);
+    return;
+  }
+
+  // Remove the placeholder rect
+  fabricCanvas.remove(rect);
+
+  // Render background to temp canvas
+  const tempCanvas = fabricCanvas.toCanvasElement();
+  const tempCtx = tempCanvas.getContext("2d");
+  if (!tempCtx) return;
+
+  try {
+    // Extract the region, apply CSS blur, then paste back as image
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = width;
+    blurCanvas.height = height;
+    const blurCtx = blurCanvas.getContext("2d");
+    if (!blurCtx) return;
+
+    // Draw the region from temp canvas
+    blurCtx.drawImage(tempCanvas, left, top, width, height, 0, 0, width, height);
+
+    // Apply blur via CSS filter
+    blurCtx.filter = `blur(${blurRadius}px)`;
+    blurCtx.drawImage(blurCanvas, 0, 0);
+    blurCtx.filter = "none";
+
+    // Create Fabric image from blurred canvas
+    const dataUrl = blurCanvas.toDataURL("image/png");
+    FabricImage.fromURL(dataUrl).then((img) => {
+      img.set({
+        left,
+        top,
+        selectable: true,
+        evented: true,
+      });
+      (img as any)._cappixBlur = true;
+      fabricCanvas!.add(img);
+      fabricCanvas!.renderAll();
+    });
+  } catch (e) {
+    // Cross-origin or other error: fall back to semi-transparent overlay
+    const fallbackRect = new Rect({
+      left,
+      top,
+      width,
+      height,
+      fill: "rgba(200,200,200,0.7)",
+      stroke: "transparent",
+      selectable: true,
+    });
+    (fallbackRect as any)._cappixBlur = true;
+    fabricCanvas.add(fallbackRect);
+  }
 }
 
 function onKeyDown(e: KeyboardEvent) {
