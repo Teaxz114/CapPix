@@ -378,6 +378,9 @@ fn capture_rect_gdi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureRe
             anyhow::bail!("GetDIBits failed");
         }
 
+        // Overlay cursor icon onto the captured image
+        overlay_cursor(hdc_mem, x, y, width, height);
+
         // BGRA -> RGBA conversion
         for chunk in pixels.chunks_exact_mut(4) {
             chunk.swap(0, 2); // B <-> R
@@ -403,5 +406,36 @@ fn capture_rect_gdi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureRe
             width: width as u32,
             height: height as u32,
         })
+    }
+}
+
+/// Overlay the current cursor icon onto the captured image in the memory DC.
+/// This draws the cursor at its current screen position (relative to the capture rect).
+fn overlay_cursor(hdc_mem: HDC, capture_x: i32, capture_y: i32, _width: i32, _height: i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DrawIconEx, GetCursorInfo, GetCursorPos, CURSORINFO, CURSORINFO_FLAGS, CURSOR_SHOWING,
+        DI_COMPAT, DI_NORMAL,
+    };
+
+    unsafe {
+        let mut ci = CURSORINFO {
+            cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+            flags: CURSORINFO_FLAGS(0),
+            hCursor: Default::default(),
+            ptScreenPos: Default::default(),
+        };
+
+        if GetCursorInfo(&mut ci).is_ok() && ci.flags == CURSOR_SHOWING {
+            let mut cursor_pos = Default::default();
+            let _ = GetCursorPos(&mut cursor_pos);
+
+            let local_x = cursor_pos.x - capture_x;
+            let local_y = cursor_pos.y - capture_y;
+
+            let _ = DrawIconEx(
+                hdc_mem, local_x, local_y, ci.hCursor, 0, 0, 0, None,
+                DI_NORMAL | DI_COMPAT,
+            );
+        }
     }
 }
