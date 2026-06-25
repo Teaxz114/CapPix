@@ -4,6 +4,9 @@
       :current-tool="currentTool"
       :current-color="currentColor"
       :current-stroke-width="currentStrokeWidth"
+      :current-fill="currentFill"
+      :current-dash-style="currentDashStyle"
+      :current-arrow-style="currentArrowStyle"
       :can-undo="historyIndex > 0"
       :can-redo="historyIndex < historyStack.length - 1"
       @tool-change="onToolChange"
@@ -62,6 +65,9 @@ const currentTool = ref("rect");
 const configStore = useConfigStore();
 const currentColor = ref(configStore.config.defaultColor);
 const currentStrokeWidth = ref(configStore.config.defaultStrokeWidth);
+const currentFill = ref("transparent");
+const currentDashStyle = ref("solid");
+const currentArrowStyle = ref("filled");
 const statusMessage = ref("");
 const historyStack = ref<string[]>([]);
 const historyIndex = ref(-1);
@@ -178,9 +184,45 @@ function onToolChange(tool: string) {
   }
 }
 
-function onStyleChange(style: { color?: string; strokeWidth?: number }) {
+/** Convert dash style name to Fabric strokeDashArray */
+function getDashArray(style: string): number[] | undefined {
+  switch (style) {
+    case "dashed": return [8, 4];
+    case "dotted": return [2, 4];
+    default: return undefined; // solid
+  }
+}
+
+/** Get arrowhead path string based on arrow style */
+function getArrowHeadPath(tipX: number, tipY: number, angle: number, headLen: number, style: string): string {
+  const leftX = tipX - headLen * Math.cos(angle - Math.PI / 6);
+  const leftY = tipY - headLen * Math.sin(angle - Math.PI / 6);
+  const rightX = tipX - headLen * Math.cos(angle + Math.PI / 6);
+  const rightY = tipY - headLen * Math.sin(angle + Math.PI / 6);
+
+  if (style === "diamond") {
+    const midX = tipX - headLen * 0.5 * Math.cos(angle);
+    const midY = tipY - headLen * 0.5 * Math.sin(angle);
+    const perpX = headLen * 0.3 * Math.cos(angle + Math.PI / 2);
+    const perpY = headLen * 0.3 * Math.sin(angle + Math.PI / 2);
+    return `M ${tipX} ${tipY} L ${midX + perpX} ${midY + perpY} L ${tipX - headLen * Math.cos(angle)} ${tipY - headLen * Math.sin(angle)} L ${midX - perpX} ${midY - perpY} Z`;
+  }
+
+  if (style === "open") {
+    // Open arrow: just two lines, no fill
+    return `M ${leftX} ${leftY} L ${tipX} ${tipY} L ${rightX} ${rightY}`;
+  }
+
+  // Default: filled triangle
+  return `M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`;
+}
+
+function onStyleChange(style: { color?: string; strokeWidth?: number; fill?: string; dashStyle?: string; arrowStyle?: string }) {
   if (style.color) currentColor.value = style.color;
   if (style.strokeWidth !== undefined) currentStrokeWidth.value = style.strokeWidth;
+  if (style.fill !== undefined) currentFill.value = style.fill;
+  if (style.dashStyle) currentDashStyle.value = style.dashStyle;
+  if (style.arrowStyle) currentArrowStyle.value = style.arrowStyle;
 
   if (fabricCanvas?.isDrawingMode && fabricCanvas.freeDrawingBrush) {
     fabricCanvas.freeDrawingBrush.color = currentColor.value;
@@ -295,9 +337,10 @@ function onMouseDown(opt: any) {
       top: pointer.y,
       width: 0,
       height: 0,
-      fill: "transparent",
+      fill: currentFill.value,
       stroke: currentColor.value,
       strokeWidth: currentStrokeWidth.value,
+      strokeDashArray: getDashArray(currentDashStyle.value),
       selectable: true,
     });
     activeObject = rect;
@@ -308,9 +351,10 @@ function onMouseDown(opt: any) {
       top: pointer.y,
       rx: 0,
       ry: 0,
-      fill: "transparent",
+      fill: currentFill.value,
       stroke: currentColor.value,
       strokeWidth: currentStrokeWidth.value,
+      strokeDashArray: getDashArray(currentDashStyle.value),
       selectable: true,
     });
     activeObject = ellipse;
@@ -319,6 +363,7 @@ function onMouseDown(opt: any) {
     const line = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
       stroke: currentColor.value,
       strokeWidth: currentStrokeWidth.value,
+      strokeDashArray: getDashArray(currentDashStyle.value),
       selectable: true,
     });
     activeObject = line;
@@ -383,17 +428,14 @@ function onMouseUp() {
     const len = Math.sqrt(dx * dx + dy * dy);
     fabricCanvas.remove(line);
     if (len > 10) {
-      // Arrow: draw arrowhead triangle at end point, and replace Line with Group
+      // Arrow: draw arrowhead at end point based on current arrow style
       const headLen = Math.min(20, len * 0.3);
       const angle = Math.atan2(dy, dx);
       const tipX = x2, tipY = y2;
-      const leftX = tipX - headLen * Math.cos(angle - Math.PI / 6);
-      const leftY = tipY - headLen * Math.sin(angle - Math.PI / 6);
-      const rightX = tipX - headLen * Math.cos(angle + Math.PI / 6);
-      const rightY = tipY - headLen * Math.sin(angle + Math.PI / 6);
-      const pathStr = `M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`;
+      const pathStr = getArrowHeadPath(tipX, tipY, angle, headLen, currentArrowStyle.value);
+      const isOpenArrow = currentArrowStyle.value === "open";
       const arrowHead = new Path(pathStr, {
-        fill: currentColor.value,
+        fill: isOpenArrow ? "transparent" : currentColor.value,
         stroke: currentColor.value,
         strokeWidth: 1,
         selectable: false,

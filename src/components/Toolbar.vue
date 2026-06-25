@@ -56,6 +56,67 @@
 
     <div class="toolbar-divider"></div>
 
+    <!-- Fill toggle (for rect/ellipse) -->
+    <div class="toolbar-section" v-if="currentTool === 'rect' || currentTool === 'ellipse'">
+      <label class="stroke-label">填充</label>
+      <button
+        :class="['style-toggle', { active: currentFill !== 'transparent' }]"
+        @click="$emit('style-change', { fill: currentFill === 'transparent' ? currentColor : 'transparent' })"
+        title="切换填充"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Dash style toggle -->
+    <div class="toolbar-section" v-if="['rect', 'ellipse', 'line', 'arrow'].includes(currentTool)">
+      <button
+        :class="['style-toggle', { active: currentDashStyle === 'solid' }]"
+        @click="$emit('style-change', { dashStyle: 'solid' })"
+        title="实线"
+      >
+        <svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <button
+        :class="['style-toggle', { active: currentDashStyle === 'dashed' }]"
+        @click="$emit('style-change', { dashStyle: 'dashed' })"
+        title="虚线"
+      >
+        <svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="currentColor" stroke-width="2" stroke-dasharray="4 2"/></svg>
+      </button>
+      <button
+        :class="['style-toggle', { active: currentDashStyle === 'dotted' }]"
+        @click="$emit('style-change', { dashStyle: 'dotted' })"
+        title="点线"
+      >
+        <svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="currentColor" stroke-width="2" stroke-dasharray="1 3"/></svg>
+      </button>
+    </div>
+
+    <!-- Arrow style (for arrow tool) -->
+    <div class="toolbar-section" v-if="currentTool === 'arrow'">
+      <label class="stroke-label">箭头</label>
+      <button
+        :class="['style-toggle', { active: currentArrowStyle === 'filled' }]"
+        @click="$emit('style-change', { arrowStyle: 'filled' })"
+        title="实心箭头"
+      >▶</button>
+      <button
+        :class="['style-toggle', { active: currentArrowStyle === 'open' }]"
+        @click="$emit('style-change', { arrowStyle: 'open' })"
+        title="空心箭头"
+      >▷</button>
+      <button
+        :class="['style-toggle', { active: currentArrowStyle === 'diamond' }]"
+        @click="$emit('style-change', { arrowStyle: 'diamond' })"
+        title="菱形箭头"
+      >◆</button>
+    </div>
+
+    <div class="toolbar-divider"></div>
+
     <!-- Undo/Redo -->
     <div class="toolbar-section">
       <button
@@ -114,13 +175,16 @@ defineProps<{
   currentTool: string;
   currentColor: string;
   currentStrokeWidth: number;
+  currentFill: string;
+  currentDashStyle: string;
+  currentArrowStyle: string;
   canUndo: boolean;
   canRedo: boolean;
 }>();
 
 defineEmits<{
   "tool-change": [tool: string];
-  "style-change": [style: { color?: string; strokeWidth?: number }];
+  "style-change": [style: { color?: string; strokeWidth?: number; fill?: string; dashStyle?: string; arrowStyle?: string }];
   undo: [];
   redo: [];
   save: [];
@@ -324,6 +388,32 @@ const presetColors = [
   font-size: 11px;
   margin-right: 4px;
   white-space: nowrap;
+}
+
+.style-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 2px;
+  transition: all 0.15s;
+}
+
+.style-toggle:hover {
+  background: #374151;
+  color: #e5e7eb;
+}
+
+.style-toggle.active {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
 }
 
 .stroke-slider {
