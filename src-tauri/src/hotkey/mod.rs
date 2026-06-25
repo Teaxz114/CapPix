@@ -8,6 +8,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY};
 
+/// Game mode state — when active, all global hotkeys are disabled
+static GAME_MODE: Mutex<bool> = Mutex::new(false);
+
 /// A single hotkey definition
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HotkeyConfig {
@@ -326,4 +329,29 @@ pub fn set_hotkey(app: AppHandle, id: String, shortcut: String) -> Result<(), St
         .map_err(|e| format!("Failed to save hotkey config: {}", e))?;
 
     Ok(())
+}
+
+/// Toggle game mode — when enabled, all global hotkeys are unregistered
+/// to avoid conflicts with game keybindings
+pub fn toggle_game_mode(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let mut game_mode = GAME_MODE.lock().map_err(|e| e.to_string())?;
+    let was_enabled = *game_mode;
+    *game_mode = enabled;
+
+    if enabled && !was_enabled {
+        // Entering game mode — unregister all hotkeys
+        unregister_hotkeys();
+        log::info!("[Hotkey] Game mode ON — all hotkeys disabled");
+    } else if !enabled && was_enabled {
+        // Leaving game mode — re-register hotkeys
+        register_hotkeys(&app).map_err(|e| e.to_string())?;
+        log::info!("[Hotkey] Game mode OFF — hotkeys restored");
+    }
+
+    Ok(*game_mode)
+}
+
+/// Get current game mode state
+pub fn get_game_mode() -> Result<bool, String> {
+    GAME_MODE.lock().map_err(|e| e.to_string()).map(|g| *g)
 }

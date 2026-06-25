@@ -147,6 +147,8 @@ pub fn run() {
             commands::capture::get_window_at_point,
             commands::hotkey::get_hotkeys,
             commands::hotkey::set_hotkey,
+            commands::hotkey::toggle_game_mode,
+            commands::hotkey::get_game_mode,
             commands::clipboard::crop_image,
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::open_screenshot_overlay,

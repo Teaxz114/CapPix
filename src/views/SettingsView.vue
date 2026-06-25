@@ -126,6 +126,17 @@
           <button class="btn-reset-hotkey" @click="resetHotkey(hk.key)" title="恢复默认">↺</button>
         </div>
         <p class="hotkey-hint">点击输入框，按下新快捷键即可修改（重启后生效）</p>
+
+        <div class="setting-row" style="margin-top: 12px;">
+          <label>游戏模式</label>
+          <button
+            :class="['btn-toggle', { active: gameMode }]"
+            @click="toggleGameMode"
+          >
+            {{ gameMode ? '已开启' : '已关闭' }}
+          </button>
+          <span class="setting-hint">开启后禁用所有快捷键，避免与游戏按键冲突</span>
+        </div>
       </section>
 
       <!-- Actions -->
@@ -140,13 +151,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useConfigStore } from "../stores/config";
 import { storeToRefs } from "pinia";
 import { invoke } from "@tauri-apps/api/core";
 
 const configStore = useConfigStore();
 const { config } = storeToRefs(configStore);
+
+const gameMode = ref(false);
+
+onMounted(async () => {
+  try {
+    gameMode.value = await invoke<boolean>("get_game_mode");
+  } catch {}
+});
+
+async function toggleGameMode() {
+  try {
+    const newState = !gameMode.value;
+    gameMode.value = await invoke<boolean>("toggle_game_mode", { enabled: newState });
+  } catch {}
+}
 
 const hotkeys = [
   { key: "hotkeyCaptureRegion", label: "区域截图" },
@@ -301,6 +327,29 @@ kbd {
   cursor: pointer;
 }
 .btn-danger:hover { background: #991b1b; }
+
+.btn-toggle {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid #374151;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-toggle.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.btn-toggle:hover { background: #374151; }
+
+.setting-hint {
+  font-size: 11px;
+  color: #6b7280;
+  margin-left: 8px;
+}
 .setting-row.vertical {
   flex-direction: column;
   align-items: flex-start;
