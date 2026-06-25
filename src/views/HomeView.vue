@@ -148,8 +148,21 @@ async function startRecording() {
 }
 
 async function startColorPicker() {
-  // Open the main window's color picker route
-  router.push("/settings");
+  // Enter screenshot overlay in color-picker mode
+  try {
+    await invoke("trigger_capture", { mode: "capture_region" });
+    // Small delay to let the overlay window open, then switch to color picker mode
+    setTimeout(async () => {
+      try {
+        const { emit } = await import("@tauri-apps/api/event");
+        await emit("activate-color-picker");
+      } catch (e) {
+        console.error("Failed to activate color picker mode:", e);
+      }
+    }, 500);
+  } catch (e) {
+    console.error("Color picker failed:", e);
+  }
 }
 
 async function pinFromClipboard() {
