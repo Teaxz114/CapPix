@@ -15,6 +15,8 @@ export interface AppConfig {
   saveQuality: number; // 1-100
   saveFormat: "png" | "jpg" | "bmp";
   autoCopyToClipboard: boolean;
+  saveDirectory: string; // custom save directory, default: Pictures/CapPix
+  filenamePattern: string; // filename pattern with {date}, {time}, {seq}
   // Hotkeys
   hotkeyCaptureRegion: string;
   hotkeyCaptureFullscreen: string;
@@ -37,6 +39,8 @@ const defaultConfig: AppConfig = {
   saveQuality: 100,
   saveFormat: "png",
   autoCopyToClipboard: true,
+  saveDirectory: "",
+  filenamePattern: "CapPix_{date}_{time}",
   hotkeyCaptureRegion: "Ctrl+Shift+A",
   hotkeyCaptureFullscreen: "Ctrl+Shift+S",
   hotkeyCaptureWindow: "Ctrl+Shift+Q",

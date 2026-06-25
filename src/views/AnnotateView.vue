@@ -41,6 +41,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush, Group, Image as FabricImage } from "fabric";
+import jsQR from "jsqr";
+import QRCode from "qrcode";
 import Toolbar from "../components/Toolbar.vue";
 import OcrPanel from "../components/OcrPanel.vue";
 import CanvasComponent from "../components/Canvas.vue";
@@ -181,6 +183,8 @@ function onToolChange(tool: string) {
     fabricCanvas.defaultCursor = "pointer";
   } else if (tool === "text") {
     fabricCanvas.defaultCursor = "text";
+  } else if (tool === "qrcode") {
+    fabricCanvas.defaultCursor = "crosshair";
   }
 }
 
@@ -330,6 +334,23 @@ function onMouseDown(opt: any) {
     return;
   }
 
+  if (currentTool.value === "qrcode") {
+    // QR code: drag rect to scan, or click to generate
+    const rect = new Rect({
+      left: pointer.x,
+      top: pointer.y,
+      width: 0,
+      height: 0,
+      fill: "rgba(59,130,246,0.15)",
+      stroke: "rgba(59,130,246,0.8)",
+      strokeWidth: 1,
+      selectable: true,
+    });
+    activeObject = rect;
+    fabricCanvas.add(rect);
+    return;
+  }
+
   // Shape tools
   if (currentTool.value === "rect") {
     const rect = new Rect({
@@ -386,7 +407,7 @@ function onMouseMove(opt: any) {
   if (!fabricCanvas || !isDrawing || !activeObject) return;
   const pointer = fabricCanvas.getScenePoint(opt.e);
 
-  if (currentTool.value === "rect" || currentTool.value === "mosaic" || currentTool.value === "blur") {
+  if (currentTool.value === "rect" || currentTool.value === "mosaic" || currentTool.value === "blur" || currentTool.value === "qrcode") {
     const left = Math.min(startX, pointer.x);
     const top = Math.min(startY, pointer.y);
     const width = Math.abs(pointer.x - startX);
@@ -417,6 +438,11 @@ function onMouseUp() {
   // Apply Gaussian blur if needed
   if (currentTool.value === "blur" && activeObject) {
     applyBlur(activeObject as Rect);
+  }
+
+  // Scan QR code in the selected region
+  if (currentTool.value === "qrcode" && activeObject) {
+    scanQrCode(activeObject as Rect);
   }
 
   // Convert arrow Line to Line+Triangle Group
@@ -606,6 +632,90 @@ function applyBlur(rect: Rect) {
   }
 }
 
+/** Scan QR code in the selected region using jsQR */
+async function scanQrCode(rect: Rect) {
+  if (!fabricCanvas) return;
+  const left = rect.left || 0;
+  const top = rect.top || 0;
+  const width = rect.width || 0;
+  const height = rect.height || 0;
+
+  if (width < 5 || height < 5) {
+    // Too small — treat as click: generate QR code
+    fabricCanvas.remove(rect);
+    await generateQrCode(left, top);
+    return;
+  }
+
+  // Remove the placeholder rect
+  fabricCanvas.remove(rect);
+
+  try {
+    // Render the region to a temp canvas for scanning
+    const tempCanvas = fabricCanvas.toCanvasElement();
+    const tempCtx = tempCanvas.getContext("2d");
+    if (!tempCtx) return;
+
+    const regionData = tempCtx.getImageData(left, top, width, height);
+    const code = jsQR(regionData.data, width, height);
+
+    if (code) {
+      // Found QR code — copy to clipboard and show notification
+      await navigator.clipboard.writeText(code.data);
+      statusMessage.value = `二维码识别成功: ${code.data.substring(0, 50)}${code.data.length > 50 ? "..." : ""} (已复制)`;
+
+      // Draw a highlight border around the QR code
+      const highlightRect = new Rect({
+        left: left + code.location.topLeftCorner.x - 2,
+        top: top + code.location.topLeftCorner.y - 2,
+        width: code.location.bottomRightCorner.x - code.location.topLeftCorner.x + 4,
+        height: code.location.bottomRightCorner.y - code.location.topLeftCorner.y + 4,
+        fill: "transparent",
+        stroke: "#22c55e",
+        strokeWidth: 2,
+        strokeDashArray: [4, 2],
+        selectable: true,
+      });
+      (highlightRect as any)._cappixQrHighlight = true;
+      fabricCanvas.add(highlightRect);
+      fabricCanvas.renderAll();
+    } else {
+      statusMessage.value = "未检测到二维码";
+    }
+  } catch (e) {
+    statusMessage.value = "二维码识别失败";
+  }
+}
+
+/** Generate a QR code and add it to the canvas */
+async function generateQrCode(left: number, top: number) {
+  const text = prompt("输入要生成二维码的内容:");
+  if (!text || !fabricCanvas) return;
+
+  try {
+    const dataUrl = await QRCode.toDataURL(text, {
+      width: 200,
+      margin: 1,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+
+    FabricImage.fromURL(dataUrl).then((img) => {
+      img.set({
+        left,
+        top,
+        selectable: true,
+        evented: true,
+      });
+      (img as any)._cappixQrCode = true;
+      fabricCanvas!.add(img);
+      fabricCanvas!.renderAll();
+      statusMessage.value = "二维码已生成";
+    });
+  } catch (e) {
+    statusMessage.value = "二维码生成失败";
+  }
+}
+
 function onKeyDown(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === "z") {
     e.preventDefault();
@@ -689,6 +799,30 @@ async function saveToFile() {
     await win.setAlwaysOnTop(false);
     await win.setDecorations(true);
     const base64 = exportCanvasBase64();
+
+    // Use custom save path if configured
+    const { saveDirectory, filenamePattern, saveFormat } = configStore.config;
+    if (saveDirectory || filenamePattern !== "CapPix_{date}_{time}" || saveFormat !== "png") {
+      // Use the new prepare_save_path + save_image_to_path flow
+      try {
+        const savePath = await invoke<string>("prepare_save_path", {
+          saveDirectory: saveDirectory || "",
+          filenamePattern: filenamePattern || "CapPix_{date}_{time}",
+          fileFormat: saveFormat || "png",
+        });
+        const result = await invoke<string>("save_image_to_path", {
+          imageBase64: base64,
+          savePath,
+        });
+        setStatus("已保存至: " + result);
+        return;
+      } catch (e) {
+        // Fall back to dialog if prepare_save_path fails
+        console.warn("Custom save path failed, falling back to dialog:", e);
+      }
+    }
+
+    // Fall back to the dialog-based save
     await invoke("save_image_to_file", { imageBase64: base64 });
     setStatus("已保存");
   } catch (e) {

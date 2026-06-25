@@ -22,6 +22,30 @@
           <label>截图后自动复制到剪贴板</label>
           <input type="checkbox" v-model="config.autoCopyToClipboard" />
         </div>
+        <div class="setting-row vertical">
+          <label>保存目录 <span class="hint">（留空则默认为 Pictures/CapPix）</span></label>
+          <div class="path-input-row">
+            <input
+              type="text"
+              v-model="config.saveDirectory"
+              placeholder="Pictures/CapPix"
+              class="path-input"
+            />
+            <button class="btn-browse" @click="browseSaveDirectory" title="浏览">📁</button>
+          </div>
+        </div>
+        <div class="setting-row vertical">
+          <label>文件名模式 <span class="hint">（可用: {date} {time} {seq}）</span></label>
+          <input
+            type="text"
+            v-model="config.filenamePattern"
+            placeholder="CapPix_{date}_{time}"
+            class="pattern-input"
+          />
+          <div class="pattern-preview">
+            预览: {{ previewFilename }}
+          </div>
+        </div>
       </section>
 
       <!-- Annotation settings -->
@@ -116,8 +140,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useConfigStore } from "../stores/config";
 import { storeToRefs } from "pinia";
+import { invoke } from "@tauri-apps/api/core";
 
 const configStore = useConfigStore();
 const { config } = storeToRefs(configStore);
@@ -133,6 +159,37 @@ const defaultHotkeys: Record<string, string> = {
   hotkeyCaptureFullscreen: "Ctrl+Shift+S",
   hotkeyCaptureWindow: "Ctrl+Shift+Q",
 };
+
+// Preview the filename pattern with current date/time
+const previewFilename = computed(() => {
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const timeStr = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+  const pattern = config.value.filenamePattern || "CapPix_{date}_{time}";
+  const ext = config.value.saveFormat || "png";
+  const filename = pattern
+    .replace("{date}", dateStr)
+    .replace("{time}", timeStr)
+    .replace("{seq}", "0001");
+  return `${filename}.${ext}`;
+});
+
+// Browse for save directory using Tauri dialog
+async function browseSaveDirectory() {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "选择保存目录",
+    });
+    if (selected) {
+      config.value.saveDirectory = selected;
+    }
+  } catch (e) {
+    console.error("Failed to open directory picker:", e);
+  }
+}
 
 function onHotkeyKeydown(e: KeyboardEvent, key: string) {
   e.preventDefault();
@@ -244,6 +301,63 @@ kbd {
   cursor: pointer;
 }
 .btn-danger:hover { background: #991b1b; }
+.setting-row.vertical {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.setting-row.vertical label {
+  width: 100%;
+}
+.hint {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: normal;
+}
+.path-input-row {
+  display: flex;
+  width: 100%;
+  gap: 6px;
+}
+.path-input, .pattern-input {
+  background: #374151;
+  color: #e5e7eb;
+  border: 1px solid #4b5563;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.path-input:focus, .pattern-input:focus {
+  border-color: #3b82f6;
+  outline: none;
+}
+.btn-browse {
+  background: #374151;
+  border: 1px solid #4b5563;
+  color: #e5e7eb;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.btn-browse:hover {
+  border-color: #3b82f6;
+  background: #4b5563;
+}
+.pattern-preview {
+  color: #6b7280;
+  font-size: 11px;
+  font-family: monospace;
+  background: #111827;
+  padding: 4px 8px;
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
 .hotkey-input {
   background: #374151;
   color: #e5e7eb;

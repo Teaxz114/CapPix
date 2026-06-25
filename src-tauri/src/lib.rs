@@ -8,6 +8,7 @@ mod recording;
 mod tray;
 
 use commands::history::HistoryState;
+use commands::save::SaveSeqState;
 use std::sync::Mutex;
 use tauri::{Listener, Manager};
 
@@ -31,6 +32,9 @@ pub fn run() {
 
             // Initialize recording manager
             app.manage(recording::RecordingManager::new());
+
+            // Initialize save sequence state
+            app.manage(SaveSeqState { seq: Mutex::new(0) });
 
             // Initialize pending screenshot store
             app.manage(commands::clipboard::PendingScreenshot(Mutex::new(None)));
@@ -151,6 +155,8 @@ pub fn run() {
             commands::clipboard::get_pending_annotate_image,
             commands::clipboard::trigger_capture,
             commands::save::save_image_to_file,
+            commands::save::save_image_to_path,
+            commands::save::prepare_save_path,
             commands::color::pick_color_at_point,
             commands::history::history_save,
             commands::history::history_list,
