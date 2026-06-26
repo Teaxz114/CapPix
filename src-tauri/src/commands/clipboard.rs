@@ -1,7 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 /// Pending screenshot data for the overlay window to pick up
 pub struct PendingScreenshot(pub Mutex<Option<String>>);
@@ -109,7 +109,7 @@ pub fn crop_image(
 
 #[tauri::command]
 pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
-    log::info!("open_screenshot_overlay called — reusing main window with router.push");
+    log::info!("open_screenshot_overlay called");
 
     let window = app.get_webview_window("main")
         .ok_or("Main window not found")?;
@@ -120,26 +120,20 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or("No primary monitor")?;
     let pos = monitor.position();
     let size = monitor.size();
-    let scale_factor = monitor.scale_factor();
 
-    // Navigate to screenshot route FIRST (while window is still hidden).
-    // This avoids the flash of old content (HomeView) when the window is
-    // shown fullscreen. The Vue component will mount and fetch the pending
-    // screenshot data via get_pending_screenshot.
-    let _ = window.eval(
-        "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/screenshot'); } })()"
-    );
-
-    // Use PhysicalSize/PhysicalPosition to avoid DPI scaling issues.
-    // monitor.size() returns physical pixels — using LogicalSize would
-    // double-scale on high-DPI displays, making the window too large.
+    // Resize and reposition while still hidden (no visual artifacts)
     let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
     let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
 
-    // Show the window AFTER navigation is initiated — the Vue component
-    // will render the screenshot image on mount, so by the time the
-    // window is visible, the screenshot content should be displayed.
+    // Show the window FIRST — WebView2 may not execute JS or deliver events
+    // while the window is hidden (SW_HIDE state).
     let _ = window.show();
+
+    // Now navigate to screenshot route via Tauri event.
+    // The frontend App.vue listens for "navigate" events and calls router.push().
+    // Using emit instead of eval because eval with __vue_app__ is fragile.
+    let _ = app.emit("navigate", "screenshot");
+
     let _ = window.set_focus();
 
     Ok(())
@@ -222,14 +216,11 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     let _ = window.set_resizable(true);
     let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
     let _ = window.center();
-
-    // Navigate to annotate route BEFORE showing the window,
-    // so the annotate view is ready when the window becomes visible.
-    let _ = window.eval(
-        "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/annotate'); } })()"
-    );
-
     let _ = window.show();
+
+    // Navigate via Tauri event (same pattern as open_screenshot_overlay)
+    let _ = app.emit("navigate", "annotate");
+
     let _ = window.set_focus();
 
     Ok(())

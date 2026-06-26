@@ -99,11 +99,11 @@ pub fn capture_rect(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureRe
         );
     }
 
-    // Three-tier fallback: DXGI → GDI
-    // DXGI Desktop Duplication can capture DirectX fullscreen apps (games, video players)
-    // GDI BitBlt cannot capture DirectX exclusive mode content
-    capture_rect_dxgi(x, y, width, height)
-        .or_else(|_| capture_rect_gdi(x, y, width, height))
+    // GDI-only capture — DXGI Desktop Duplication returns all-black frames
+    // on some GPU/driver configurations (e.g. hybrid GPU laptops where
+    // the DXGI adapter doesn't match the display output).
+    // GDI BitBlt with CAPTUREBLT is reliable for normal desktop capture.
+    capture_rect_gdi(x, y, width, height)
 }
 
 /// DXGI Desktop Duplication capture (Win8+) — can capture DirectX fullscreen apps

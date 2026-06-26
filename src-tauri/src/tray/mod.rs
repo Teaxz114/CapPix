@@ -74,11 +74,8 @@ pub fn setup_tray(app: &App) -> anyhow::Result<()> {
                     } else {
                         "settings"
                     };
-                    // Use router.push — window.location.hash doesn't trigger Vue Router
-                    let _ = window.eval(&format!(
-                        "(() => {{ const a = document.querySelector('#app').__vue_app__; if(a) {{ a.config.globalProperties.$router.push('/{}'); }} }})()",
-                        route
-                    ));
+                    // Navigate via Tauri event (consistent with screenshot/annotate)
+                    let _ = app.emit("navigate", route);
                 }
             }
             "screen_record" => {
