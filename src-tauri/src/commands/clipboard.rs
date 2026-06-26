@@ -111,50 +111,55 @@ pub fn crop_image(
 pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("open_screenshot_overlay called — reusing main window with router.push");
 
-    // Reuse the main window — creating new WebviewWindow fails because
-    // WebviewUrl::App doesn't register Tauri's custom protocol in the new webview
-    // (causes Edge popup or blank screen). Instead, we navigate the main window
-    // to the screenshot route using Vue Router's router.push() via eval.
-    //
-    // Key: we do NOT use set_decorations(false) or set_always_on_top(true) on
-    // the main window — those aggressive operations destabilize WebView2.
-    // Instead, the screenshot overlay is a CSS full-screen overlay within the
-    // existing window, which is much more stable.
-
     let window = app.get_webview_window("main")
         .ok_or("Main window not found")?;
 
-    // Only resize and show — don't change decorations or always_on_top
     let monitor = app
         .primary_monitor()
         .map_err(|e| e.to_string())?
         .ok_or("No primary monitor")?;
     let pos = monitor.position();
     let size = monitor.size();
+    let scale_factor = monitor.scale_factor();
 
-    let _ = window.set_size(tauri::LogicalSize::new(size.width as f64, size.height as f64));
-    let _ = window.set_position(tauri::LogicalPosition::new(pos.x as f64, pos.y as f64));
-    let _ = window.show();
-    let _ = window.set_focus();
-
-    // Navigate using Vue Router — window.location.hash doesn't trigger Vue Router
+    // Navigate to screenshot route FIRST (while window is still hidden).
+    // This avoids the flash of old content (HomeView) when the window is
+    // shown fullscreen. The Vue component will mount and fetch the pending
+    // screenshot data via get_pending_screenshot.
     let _ = window.eval(
         "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/screenshot'); } })()"
     );
+
+    // Use PhysicalSize/PhysicalPosition to avoid DPI scaling issues.
+    // monitor.size() returns physical pixels — using LogicalSize would
+    // double-scale on high-DPI displays, making the window too large.
+    let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
+    let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+
+    // Show the window AFTER navigation is initiated — the Vue component
+    // will render the screenshot image on mount, so by the time the
+    // window is visible, the screenshot content should be displayed.
+    let _ = window.show();
+    let _ = window.set_focus();
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+pub async fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     log::info!("trigger_capture called with mode: {}", mode);
 
-    // Hide main window BEFORE capturing — otherwise we capture ourselves
+    // Hide main window BEFORE capturing — otherwise we capture ourselves.
+    // CRITICAL: win.hide() posts a message to the window's message queue,
+    // but it won't be processed until the main thread's message loop runs.
+    // Since this is now an async command (runs on Tokio worker thread),
+    // the main thread is free to process the SW_HIDE message during our sleep.
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
     }
-    // Brief delay to ensure window is fully hidden from screen
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    // Wait for: main thread processes SW_HIDE → DWM recomposites desktop (1 vsync ~16ms)
+    // 200ms gives ample margin for the hide to fully take effect.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     match mode.as_str() {
         "capture_region" | "capture_window" => {
@@ -217,13 +222,15 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     let _ = window.set_resizable(true);
     let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
     let _ = window.center();
-    let _ = window.show();
-    let _ = window.set_focus();
 
-    // Navigate to annotate route via eval+router
+    // Navigate to annotate route BEFORE showing the window,
+    // so the annotate view is ready when the window becomes visible.
     let _ = window.eval(
         "(() => { const a = document.querySelector('#app').__vue_app__; if(a) { a.config.globalProperties.$router.push('/annotate'); } })()"
     );
+
+    let _ = window.show();
+    let _ = window.set_focus();
 
     Ok(())
 }

@@ -91,8 +91,15 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.hide();
                         }
-                        // Brief delay to ensure window is fully hidden from screen
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        // Pump the Windows message loop to ensure the hide is processed.
+                        // win.hide() dispatches to the main thread, but from a Tokio worker
+                        // the actual SW_HIDE may not execute until the main thread processes it.
+                        // We need to wait long enough for: dispatch → main thread processes →
+                        // DWM recomposites the desktop (one vsync ~16ms).
+                        //
+                        // 200ms gives ample time for the hide to take effect and the DWM to
+                        // recompose the desktop without the CapPix window.
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
@@ -123,7 +130,7 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.hide();
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
@@ -146,7 +153,7 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.hide();
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
