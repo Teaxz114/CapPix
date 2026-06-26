@@ -635,7 +635,7 @@ async function saveToHistory() {
 
 async function navigateToAnnotate(imageBase64: string) {
   try {
-    // open_annotate_window will close this overlay and open annotate in main window
+    // open_annotate_window will store image data and navigate main window
     await invoke("open_annotate_window", { imageBase64 });
   } catch (e) {
     console.error("Failed to open annotate window:", e);
@@ -875,13 +875,21 @@ async function cancelCapture() {
 }
 
 async function restoreMainWindow() {
-  // Screenshot now runs in a dedicated overlay window — just close it.
-  // The main window is untouched and stays in its normal state.
+  // Restore main window from fullscreen overlay mode to normal mode
   try {
     const win = getCurrentWindow();
-    await win.close();
+    await win.setDecorations(true);
+    await win.setAlwaysOnTop(false);
+    await win.setResizable(true);
+    await win.setSize(new (await import("@tauri-apps/api/dpi")).LogicalSize(800, 600));
+    await win.center();
+    // Navigate back to home using Vue Router
+    const appEl = document.querySelector('#app') as any;
+    if (appEl?.__vue_app__) {
+      appEl.__vue_app__.config.globalProperties.$router.push('/');
+    }
   } catch (e) {
-    console.error("Failed to close screenshot overlay:", e);
+    console.error("Failed to restore window:", e);
   }
 }
 </script>
