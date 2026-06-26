@@ -148,6 +148,14 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     log::info!("trigger_capture called with mode: {}", mode);
+
+    // Hide main window BEFORE capturing — otherwise we capture ourselves
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    // Brief delay to ensure window is fully hidden from screen
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     match mode.as_str() {
         "capture_region" | "capture_window" => {
             match crate::capture::screen::capture_screen(0) {
@@ -159,7 +167,13 @@ pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String
                     }
                     open_screenshot_overlay(app)?;
                 }
-                Err(e) => log::error!("Capture failed: {}", e),
+                Err(e) => {
+                    log::error!("Capture failed: {}", e);
+                    // Restore window on failure
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.show();
+                    }
+                }
             }
         }
         "capture_fullscreen" => {
@@ -167,7 +181,12 @@ pub fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), String
                 Ok(result) => {
                     open_annotate_window(app, result.image_base64)?;
                 }
-                Err(e) => log::error!("Capture failed: {}", e),
+                Err(e) => {
+                    log::error!("Capture failed: {}", e);
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.show();
+                    }
+                }
             }
         }
         _ => return Err(format!("Unknown capture mode: {}", mode)),

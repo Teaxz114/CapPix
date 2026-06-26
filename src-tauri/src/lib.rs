@@ -87,6 +87,13 @@ pub fn run() {
                 if payload.contains("capture_region") {
                     let app = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        // Hide main window BEFORE capturing — otherwise we capture ourselves
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.hide();
+                        }
+                        // Brief delay to ensure window is fully hidden from screen
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
                                 // Store screenshot data for overlay to pick up
@@ -100,24 +107,47 @@ pub fn run() {
                                     return;
                                 }
                             }
-                            Err(e) => log::error!("Capture failed: {}", e),
+                            Err(e) => {
+                                log::error!("Capture failed: {}", e);
+                                // Restore window on failure
+                                if let Some(win) = app.get_webview_window("main") {
+                                    let _ = win.show();
+                                }
+                            }
                         }
                     });
                 } else if payload.contains("capture_fullscreen") {
                     let app = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        // Hide main window before capturing
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.hide();
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
                                 if let Err(e) = commands::clipboard::open_annotate_window(app.clone(), result.image_base64) {
                                     log::error!("Failed to open annotate window: {}", e);
                                 }
                             }
-                            Err(e) => log::error!("Capture failed: {}", e),
+                            Err(e) => {
+                                log::error!("Capture failed: {}", e);
+                                if let Some(win) = app.get_webview_window("main") {
+                                    let _ = win.show();
+                                }
+                            }
                         }
                     });
                 } else if payload.contains("capture_window") {
                     let app = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        // Hide main window before capturing
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.hide();
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
                                 // Store screenshot data for overlay to pick up
@@ -131,7 +161,12 @@ pub fn run() {
                                     return;
                                 }
                             }
-                            Err(e) => log::error!("Capture failed: {}", e),
+                            Err(e) => {
+                                log::error!("Capture failed: {}", e);
+                                if let Some(win) = app.get_webview_window("main") {
+                                    let _ = win.show();
+                                }
+                            }
                         }
                     });
                 }
