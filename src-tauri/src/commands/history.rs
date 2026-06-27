@@ -32,6 +32,15 @@ pub fn history_save(
 
     let image_path = file_path.to_string_lossy().to_string();
 
+    // Generate thumbnail (200px wide) for faster history list loading
+    let thumb_dir = app_data.join("thumbnails");
+    std::fs::create_dir_all(&thumb_dir).map_err(|e| e.to_string())?;
+    let thumb_path = thumb_dir.join(&filename);
+    if let Ok(img) = image::load_from_memory(&image_data) {
+        let thumb = img.thumbnail(200, 200);
+        let _ = thumb.save(&thumb_path);
+    }
+
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let record = ScreenshotRecord {
         id: 0,
@@ -113,6 +122,38 @@ pub fn get_screenshot_image(image_path: String) -> Result<String, String> {
     use base64::engine::general_purpose::STANDARD;
     let data = std::fs::read(&image_path).map_err(|e| format!("Failed to read image: {}", e))?;
     Ok(STANDARD.encode(&data))
+}
+
+/// Read a thumbnail image for a screenshot (much faster than full image)
+/// Derives thumbnail path from the image path: screenshots/X.png → thumbnails/X.png
+#[tauri::command]
+pub fn get_screenshot_thumbnail(image_path: String) -> Result<String, String> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    // Derive thumbnail path
+    let path = std::path::Path::new(&image_path);
+    let filename = path.file_name().unwrap_or_default();
+    let parent = path.parent().and_then(|p| p.parent()).unwrap_or(std::path::Path::new("."));
+    let thumb_path = parent.join("thumbnails").join(filename);
+
+    if thumb_path.exists() {
+        let data = std::fs::read(&thumb_path).map_err(|e| format!("Failed to read thumbnail: {}", e))?;
+        Ok(STANDARD.encode(&data))
+    } else {
+        // Fallback: generate thumbnail on-the-fly from full image
+        let data = std::fs::read(&image_path).map_err(|e| format!("Failed to read image: {}", e))?;
+        if let Ok(img) = image::load_from_memory(&data) {
+            let thumb = img.thumbnail(200, 200);
+            let mut buf = Vec::new();
+            let cursor = std::io::Cursor::new(&mut buf);
+            let _ = thumb.write_to(cursor, image::ImageFormat::Png);
+            Ok(STANDARD.encode(&buf))
+        } else {
+            // Last resort: return full image
+            Ok(STANDARD.encode(&data))
+        }
+    }
 }
 
 // --- Pin persistence commands ---

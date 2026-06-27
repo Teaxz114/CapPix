@@ -88,9 +88,23 @@ fn find_ocr_worker(app: &tauri::AppHandle) -> Result<(String, Vec<String>), Stri
 
 #[tauri::command]
 pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<OcrResult, String> {
-    let (program, args) = find_ocr_worker(&app)?;
+    // Try local OCR worker first (cappix_ocr.exe or Python)
+    match ocr_image_local(&app, &image_base64).await {
+        Ok(result) => return Ok(result),
+        Err(local_err) => {
+            log::info!("[OCR] Local OCR failed ({}), trying online API fallback", local_err);
+        }
+    }
 
-    log::info!("[OCR] Spawning: {} {:?}", program, args);
+    // Fallback: online OCR API (ocr.space free tier)
+    ocr_image_online(&image_base64).await
+}
+
+/// Local OCR via bundled cappix_ocr.exe or Python worker
+async fn ocr_image_local(app: &tauri::AppHandle, image_base64: &str) -> Result<OcrResult, String> {
+    let (program, args) = find_ocr_worker(app)?;
+
+    log::info!("[OCR] Spawning local worker: {} {:?}", program, args);
 
     let mut cmd = tokio::process::Command::new(&program);
     cmd.stdin(Stdio::piped())
@@ -131,9 +145,115 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
     let result: OcrResult = serde_json::from_str(stdout_str.trim())
         .map_err(|e| format!("Failed to parse OCR result: {} (raw: {})", e, &stdout_str[..stdout_str.len().min(200)]))?;
 
-    log::info!("[OCR] Result: {} blocks, elapsed: {:?}s", result.blocks.len(), result.elapsed);
-
+    log::info!("[OCR] Local result: {} blocks, elapsed: {:?}s", result.blocks.len(), result.elapsed);
     Ok(result)
+}
+
+/// Online OCR fallback using ocr.space free API (no key required, 25K/month)
+async fn ocr_image_online(image_base64: &str) -> Result<OcrResult, String> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    let image_bytes = STANDARD.decode(image_base64)
+        .map_err(|e| format!("Invalid base64: {}", e))?;
+
+    // Determine format from magic bytes
+    let filetype = if image_bytes.starts_with(b"\x89PNG") {
+        "PNG"
+    } else if image_bytes.starts_with(b"\xFF\xD8") {
+        "JPG"
+    } else {
+        "PNG"
+    };
+
+    let start = std::time::Instant::now();
+
+    let client = reqwest::Client::new();
+    let body = reqwest::multipart::Form::new()
+        .text("language", "chs".to_string())
+        .text("isOverlayRequired", "true".to_string())
+        .part("file", reqwest::multipart::Part::bytes(image_bytes)
+            .file_name(format!("image.{}", filetype.to_lowercase()))
+            .mime_str(format!("image/{}", filetype.to_lowercase()).as_str())
+            .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![])
+                .file_name("image.png")
+                .mime_str("image/png").unwrap()));
+
+    let response = client
+        .post("https://api.ocr.space/parse/image")
+        .multipart(body)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Online OCR request failed: {}", e))?;
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse online OCR response: {}", e))?;
+
+    let elapsed = start.elapsed().as_secs_f64();
+
+    // Check for API errors
+    if let Some(exit_code) = body.get("OCRExitCode").and_then(|v| v.as_i64()) {
+        if exit_code != 1 {
+            let error_msg = body.get("ErrorMessage")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown OCR API error");
+            return Err(format!("Online OCR error: {}", error_msg));
+        }
+    }
+
+    let mut all_text = String::new();
+    let mut blocks = Vec::new();
+
+    if let Some(parsed_results) = body.get("ParsedResults").and_then(|v| v.as_array()) {
+        for parsed in parsed_results {
+            if let Some(text) = parsed.get("ParsedText").and_then(|v| v.as_str()) {
+                all_text.push_str(text);
+                all_text.push('\n');
+            }
+
+            // Extract block-level info if available
+            if let Some(overlay) = parsed.get("TextOverlay").and_then(|v| v.get("Lines")).and_then(|v| v.as_array()) {
+                for line in overlay {
+                    let line_text = line.get("LineText")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let mut bbox = Vec::new();
+                    if let Some(words) = line.get("Words").and_then(|v| v.as_array()) {
+                        for word in words {
+                            let left = word.get("Left").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let top = word.get("Top").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let width = word.get("Width").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let height = word.get("Height").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            bbox.push(vec![left, top]);
+                            bbox.push(vec![left + width, top + height]);
+                        }
+                    }
+                    blocks.push(OcrBlock {
+                        text: line_text,
+                        confidence: 0.9, // ocr.space doesn't provide per-block confidence
+                        bbox,
+                    });
+                }
+            }
+        }
+    }
+
+    if all_text.trim().is_empty() {
+        return Err("Online OCR returned empty result".to_string());
+    }
+
+    log::info!("[OCR] Online result: {} blocks, elapsed: {:.2}s", blocks.len(), elapsed);
+
+    Ok(OcrResult {
+        text: all_text.trim().to_string(),
+        blocks,
+        elapsed: Some(elapsed),
+        error: None,
+    })
 }
 
 #[tauri::command]

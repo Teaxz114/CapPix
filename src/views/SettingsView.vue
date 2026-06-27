@@ -125,7 +125,7 @@
           />
           <button class="btn-reset-hotkey" @click="resetHotkey(hk.key)" title="恢复默认">↺</button>
         </div>
-        <p class="hotkey-hint">点击输入框，按下新快捷键即可修改（重启后生效）</p>
+        <p class="hotkey-hint">点击输入框，按下新快捷键即可修改（立即生效）</p>
 
         <div class="setting-row" style="margin-top: 12px;">
           <label>游戏模式</label>
@@ -239,12 +239,39 @@ function onHotkeyKeydown(e: KeyboardEvent, key: string) {
 
   const shortcut = parts.join("+");
 
-  // Update config
+  // Update frontend config
   (config.value as any)[key] = shortcut;
+
+  // Map frontend key to Rust hotkey id
+  const keyToId: Record<string, string> = {
+    hotkeyCaptureRegion: "capture_region",
+    hotkeyCaptureFullscreen: "capture_fullscreen",
+    hotkeyCaptureWindow: "capture_window",
+  };
+  const id = keyToId[key];
+  if (id) {
+    invoke("set_hotkey", { id, shortcut }).catch((err) => {
+      console.error("Failed to register hotkey:", err);
+      // Revert frontend config on failure
+      (config.value as any)[key] = defaultHotkeys[key];
+    });
+  }
 }
 
 function resetHotkey(key: string) {
   (config.value as any)[key] = defaultHotkeys[key];
+
+  const keyToId: Record<string, string> = {
+    hotkeyCaptureRegion: "capture_region",
+    hotkeyCaptureFullscreen: "capture_fullscreen",
+    hotkeyCaptureWindow: "capture_window",
+  };
+  const id = keyToId[key];
+  if (id) {
+    invoke("set_hotkey", { id, shortcut: defaultHotkeys[key] }).catch((err) => {
+      console.error("Failed to reset hotkey:", err);
+    });
+  }
 }
 
 function resetConfig() {

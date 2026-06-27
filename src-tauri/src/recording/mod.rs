@@ -161,26 +161,110 @@ pub fn get_recording_state(app: tauri::AppHandle) -> Result<RecordingState, Stri
 
 #[tauri::command]
 pub fn pause_recording(app: tauri::AppHandle) -> Result<(), String> {
-    // FFmpeg gdigrab does not support pause/resume natively.
-    // Mark the state as paused for UI purposes; actual frame capture continues.
     let state = app.state::<RecordingManager>();
     let mut s = state.state.lock().map_err(|e| e.to_string())?;
-    if !s.is_recording {
-        return Err("Not recording".to_string());
+    if !s.is_recording || s.is_paused {
+        return Err("Not recording or already paused".to_string());
     }
-    s.is_paused = true;
-    Ok(())
+
+    // Suspend the ffmpeg process threads on Windows
+    let process = state.process.lock().map_err(|e| e.to_string())?;
+    if let Some(ref child) = *process {
+        if let Some(pid) = child.id() {
+            if let Some(handle) = get_process_handle(pid) {
+                unsafe {
+                    suspend_process_threads(handle);
+                }
+                s.is_paused = true;
+                log::info!("[Recording] Paused ffmpeg process (PID {})", pid);
+                return Ok(());
+            }
+        }
+    }
+
+    Err("Failed to pause ffmpeg process".to_string())
 }
 
 #[tauri::command]
 pub fn resume_recording(app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<RecordingManager>();
     let mut s = state.state.lock().map_err(|e| e.to_string())?;
-    if !s.is_recording {
-        return Err("Not recording".to_string());
+    if !s.is_recording || !s.is_paused {
+        return Err("Not recording or not paused".to_string());
     }
-    s.is_paused = false;
-    Ok(())
+
+    // Resume the ffmpeg process threads
+    let process = state.process.lock().map_err(|e| e.to_string())?;
+    if let Some(ref child) = *process {
+        if let Some(pid) = child.id() {
+            if let Some(handle) = get_process_handle(pid) {
+                unsafe {
+                    resume_process_threads(handle);
+                }
+                s.is_paused = false;
+                log::info!("[Recording] Resumed ffmpeg process (PID {})", pid);
+                return Ok(());
+            }
+        }
+    }
+
+    Err("Failed to resume ffmpeg process".to_string())
+}
+
+/// Get a PROCESS handle for the given PID with PROCESS_SUSPEND_RESUME access
+fn get_process_handle(pid: u32) -> Option<windows::Win32::Foundation::HANDLE> {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
+    unsafe {
+        OpenProcess(PROCESS_SUSPEND_RESUME, false, pid).ok()
+    }
+}
+
+/// Suspend all threads of the process via NtSuspendProcess (ntdll.dll)
+unsafe fn suspend_process_threads(handle: windows::Win32::Foundation::HANDLE) -> bool {
+    use std::ffi::CString;
+    let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleA(
+        windows::core::PCSTR(CString::new("ntdll.dll").unwrap().as_ptr() as *const u8)
+    ).ok();
+    if let Some(module) = ntdll {
+        let proc_name = CString::new("NtSuspendProcess").unwrap();
+        let proc_addr = windows::Win32::System::LibraryLoader::GetProcAddress(
+            module,
+            windows::core::PCSTR(proc_name.as_ptr() as *const u8)
+        );
+        if let Some(addr) = proc_addr {
+            let nt_suspend: extern "system" fn(windows::Win32::Foundation::HANDLE) -> i32 =
+                std::mem::transmute(addr);
+            nt_suspend(handle) == 0
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+/// Resume all threads of the process via NtResumeProcess (ntdll.dll)
+unsafe fn resume_process_threads(handle: windows::Win32::Foundation::HANDLE) -> bool {
+    use std::ffi::CString;
+    let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleA(
+        windows::core::PCSTR(CString::new("ntdll.dll").unwrap().as_ptr() as *const u8)
+    ).ok();
+    if let Some(module) = ntdll {
+        let proc_name = CString::new("NtResumeProcess").unwrap();
+        let proc_addr = windows::Win32::System::LibraryLoader::GetProcAddress(
+            module,
+            windows::core::PCSTR(proc_name.as_ptr() as *const u8)
+        );
+        if let Some(addr) = proc_addr {
+            let nt_resume: extern "system" fn(windows::Win32::Foundation::HANDLE) -> i32 =
+                std::mem::transmute(addr);
+            nt_resume(handle) == 0
+        } else {
+            false
+        }
+    } else {
+        false
+    }
 }
 
 #[tauri::command]

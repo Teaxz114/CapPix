@@ -68,6 +68,55 @@ function onMouseMove(e: MouseEvent) {
   invoke<ColorInfo>("pick_color_at_point", { x: e.screenX, y: e.screenY })
     .then(c => { color.value = c; })
     .catch(() => {});
+
+  // Draw magnifier — pick 20x20 pixel region around cursor
+  drawMagnifier(e.screenX, e.screenY);
+}
+
+function drawMagnifier(screenX: number, screenY: number) {
+  const canvas = magCanvas.value;
+  if (!canvas) return;
+
+  invoke<number[]>("pick_color_region", { x: screenX, y: screenY, size: 20 })
+    .then(rgba => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const regionSize = 20;
+      const canvasSize = 160;
+      const scale = canvasSize / regionSize; // 8x magnification
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, canvasSize, canvasSize);
+
+      // Draw each pixel as a scaled block
+      for (let y = 0; y < regionSize; y++) {
+        for (let x = 0; x < regionSize; x++) {
+          const i = (y * regionSize + x) * 4;
+          const r = rgba[i];
+          const g = rgba[i + 1];
+          const b = rgba[i + 2];
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.fillRect(x * scale, y * scale, scale, scale);
+        }
+      }
+
+      // Draw crosshair at center
+      const cx = (regionSize / 2) * scale;
+      const cy = (regionSize / 2) * scale;
+      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, 0); ctx.lineTo(cx, canvasSize);
+      ctx.moveTo(0, cy); ctx.lineTo(canvasSize, cy);
+      ctx.stroke();
+
+      // Draw border around center pixel
+      ctx.strokeStyle = "rgba(255,255,0,0.8)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cx - scale / 2, cy - scale / 2, scale, scale);
+    })
+    .catch(() => {});
 }
 
 async function onPick() {

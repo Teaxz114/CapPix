@@ -40,6 +40,8 @@ pub fn run() {
             app.manage(commands::clipboard::PendingScreenshot(Mutex::new(None)));
             // Initialize pending annotate image store
             app.manage(commands::clipboard::PendingAnnotateImage(Mutex::new(None)));
+            // Initialize pin window HWND registry (native windows not in Tauri manager)
+            app.manage(pin::PinRegistry(Mutex::new(std::collections::HashMap::new())));
 
             // Restore pinned windows from database
             {
@@ -202,6 +204,7 @@ pub fn run() {
             commands::save::save_image_to_path,
             commands::save::prepare_save_path,
             commands::color::pick_color_at_point,
+            commands::color::pick_color_region,
             commands::history::history_save,
             commands::history::history_list,
             commands::history::history_search,
@@ -209,6 +212,7 @@ pub fn run() {
             commands::history::history_count,
             commands::history::history_clear,
             commands::history::get_screenshot_image,
+            commands::history::get_screenshot_thumbnail,
             commands::history::pin_save,
             commands::history::pin_list,
             commands::history::pin_delete,
