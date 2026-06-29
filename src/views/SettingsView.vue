@@ -79,6 +79,14 @@
       <section class="settings-section">
         <h3>OCR</h3>
         <div class="setting-row">
+          <label>识别语言</label>
+          <select v-model="config.ocrLanguage">
+            <option value="ch_en">中英混合</option>
+            <option value="ch">中文</option>
+            <option value="en">英文</option>
+          </select>
+        </div>
+        <div class="setting-row">
           <label>马赛克块大小</label>
           <input type="range" v-model.number="config.mosaicBlockSize" min="4" max="30" />
           <span class="setting-value">{{ config.mosaicBlockSize }}px</span>

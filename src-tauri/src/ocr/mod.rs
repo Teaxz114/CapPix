@@ -87,9 +87,9 @@ fn find_ocr_worker(app: &tauri::AppHandle) -> Result<(String, Vec<String>), Stri
 }
 
 #[tauri::command]
-pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<OcrResult, String> {
+pub async fn ocr_image(app: tauri::AppHandle, image_base64: String, language: Option<String>) -> Result<OcrResult, String> {
     // Try local OCR worker first (cappix_ocr.exe or Python)
-    match ocr_image_local(&app, &image_base64).await {
+    match ocr_image_local(&app, &image_base64, language.as_deref()).await {
         Ok(result) => return Ok(result),
         Err(local_err) => {
             log::info!("[OCR] Local OCR failed ({}), trying online API fallback", local_err);
@@ -97,11 +97,11 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String) -> Result<Oc
     }
 
     // Fallback: online OCR API (ocr.space free tier)
-    ocr_image_online(&image_base64).await
+    ocr_image_online(&image_base64, language.as_deref()).await
 }
 
 /// Local OCR via bundled cappix_ocr.exe or Python worker
-async fn ocr_image_local(app: &tauri::AppHandle, image_base64: &str) -> Result<OcrResult, String> {
+async fn ocr_image_local(app: &tauri::AppHandle, image_base64: &str, language: Option<&str>) -> Result<OcrResult, String> {
     let (program, args) = find_ocr_worker(app)?;
 
     log::info!("[OCR] Spawning local worker: {} {:?}", program, args);
@@ -150,12 +150,17 @@ async fn ocr_image_local(app: &tauri::AppHandle, image_base64: &str) -> Result<O
 }
 
 /// Online OCR fallback using ocr.space free API (no key required, 25K/month)
-async fn ocr_image_online(image_base64: &str) -> Result<OcrResult, String> {
+async fn ocr_image_online(image_base64: &str, language: Option<&str>) -> Result<OcrResult, String> {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
 
     let image_bytes = STANDARD.decode(image_base64)
         .map_err(|e| format!("Invalid base64: {}", e))?;
+
+    // ocr.space free tier: 1MB limit per file, 25K/month
+    if image_bytes.len() > 1_000_000 {
+        return Err("图片过大（>1MB），在线 OCR 免费版不支持。请缩小截图后重试，或安装本地 OCR 引擎。".to_string());
+    }
 
     // Determine format from magic bytes
     let filetype = if image_bytes.starts_with(b"\x89PNG") {
@@ -168,9 +173,16 @@ async fn ocr_image_online(image_base64: &str) -> Result<OcrResult, String> {
 
     let start = std::time::Instant::now();
 
+    // Map language code to ocr.space format
+    let lang_code = match language.unwrap_or("ch_en") {
+        "en" => "eng",
+        "ch" => "chs",
+        _ => "chs", // default: Chinese Simplified
+    };
+
     let client = reqwest::Client::new();
     let body = reqwest::multipart::Form::new()
-        .text("language", "chs".to_string())
+        .text("language", lang_code.to_string())
         .text("isOverlayRequired", "true".to_string())
         .part("file", reqwest::multipart::Part::bytes(image_bytes)
             .file_name(format!("image.{}", filetype.to_lowercase()))

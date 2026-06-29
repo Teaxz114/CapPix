@@ -89,12 +89,19 @@ async function recognize(imageBase64: string) {
   result.value = null;
   translation.value = null;
   try {
-    result.value = await invoke<OcrResult>("ocr_image", { imageBase64 });
+    result.value = await invoke<OcrResult>("ocr_image", { imageBase64, language: "chs" });
     if (result.value?.error) {
       error.value = result.value.error;
     }
   } catch (e) {
-    error.value = String(e);
+    const msg = String(e);
+    if (msg.includes("1MB") || msg.includes("过大")) {
+      error.value = "图片过大（>1MB），在线 OCR 不支持。请缩小截图或安装本地 OCR。";
+    } else if (msg.includes("not found") || msg.includes("worker")) {
+      error.value = "本地 OCR 引擎未安装，在线回退也失败。请安装 cappix_ocr.exe 或 Python + rapidocr。";
+    } else {
+      error.value = msg;
+    }
   } finally {
     loading.value = false;
   }

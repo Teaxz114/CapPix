@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "title": "CapPix",
         "visible": false,
         "decorations": true,
         "width": 800,

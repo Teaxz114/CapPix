@@ -9,11 +9,13 @@ pub struct RecordingState {
     pub is_paused: bool,
     pub output_path: String,
     pub duration_secs: f64,
+    pub started_at: Option<f64>, // unix timestamp when recording started
+    pub paused_at: Option<f64>,  // unix timestamp when paused (accumulated pause time)
 }
 
 pub struct RecordingManager {
     process: Mutex<Option<tokio::process::Child>>,
-    state: Mutex<RecordingState>,
+    pub state: Mutex<RecordingState>,
 }
 
 impl RecordingManager {
@@ -25,6 +27,8 @@ impl RecordingManager {
                 is_paused: false,
                 output_path: String::new(),
                 duration_secs: 0.0,
+                started_at: None,
+                paused_at: None,
             }),
         }
     }
@@ -44,6 +48,17 @@ pub async fn start_recording(
         if s.is_recording {
             return Err("Already recording".to_string());
         }
+    }
+
+    // Check ffmpeg availability
+    let check = tokio::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+    if check.is_err() {
+        return Err("FFmpeg 未安装或不在 PATH 中。请安装 FFmpeg: https://ffmpeg.org/download.html".to_string());
     }
 
     // Determine output path
@@ -107,6 +122,8 @@ pub async fn start_recording(
         s.is_paused = false;
         s.output_path = out.clone();
         s.duration_secs = 0.0;
+        s.started_at = Some(chrono::Local::now().timestamp_millis() as f64 / 1000.0);
+        s.paused_at = None;
         let mut p = state.process.lock().map_err(|e| e.to_string())?;
         *p = Some(child);
     }
@@ -145,6 +162,8 @@ pub async fn stop_recording(app: tauri::AppHandle) -> Result<String, String> {
         let mut s = state.state.lock().map_err(|e| e.to_string())?;
         s.is_recording = false;
         s.is_paused = false;
+        s.started_at = None;
+        s.paused_at = None;
         let path = s.output_path.clone();
         path
     };
@@ -155,7 +174,19 @@ pub async fn stop_recording(app: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn get_recording_state(app: tauri::AppHandle) -> Result<RecordingState, String> {
     let state = app.state::<RecordingManager>();
-    let s = state.state.lock().map_err(|e| e.to_string())?;
+    let mut s = state.state.lock().map_err(|e| e.to_string())?;
+
+    // Calculate actual duration from started_at
+    if s.is_recording {
+        if s.is_paused {
+            // While paused, duration stays at the value when paused
+            s.duration_secs = s.paused_at.unwrap_or(0.0);
+        } else if let Some(started) = s.started_at {
+            let now = chrono::Local::now().timestamp_millis() as f64 / 1000.0;
+            s.duration_secs = s.paused_at.unwrap_or(0.0) + (now - started);
+        }
+    }
+
     Ok(s.clone())
 }
 
@@ -176,6 +207,8 @@ pub fn pause_recording(app: tauri::AppHandle) -> Result<(), String> {
                     suspend_process_threads(handle);
                 }
                 s.is_paused = true;
+                // Store accumulated duration at pause time
+                s.paused_at = Some(s.duration_secs);
                 log::info!("[Recording] Paused ffmpeg process (PID {})", pid);
                 return Ok(());
             }
@@ -202,6 +235,8 @@ pub fn resume_recording(app: tauri::AppHandle) -> Result<(), String> {
                     resume_process_threads(handle);
                 }
                 s.is_paused = false;
+                // Reset started_at so duration = paused_at + (now - new started_at)
+                s.started_at = Some(chrono::Local::now().timestamp_millis() as f64 / 1000.0);
                 log::info!("[Recording] Resumed ffmpeg process (PID {})", pid);
                 return Ok(());
             }

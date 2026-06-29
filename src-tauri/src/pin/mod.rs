@@ -4,9 +4,8 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, MoveWindow, SetLayeredWindowAttributes, SetWindowLongPtrW,
-    GWL_EXSTYLE, GWLP_USERDATA, LWA_ALPHA,
-    WS_EX_LAYERED, WS_EX_TRANSPARENT,
+    GetWindowLongPtrW, GetWindowRect, MoveWindow, SetLayeredWindowAttributes, SetWindowLongPtrW,
+    GWLP_USERDATA, GWL_EXSTYLE, LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT,
 };
 
 mod native_window;
@@ -49,6 +48,8 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
         height as i32,
         x,
         y,
+        id.clone(),
+        app.clone(),
     )?;
 
     log::info!("Native pin window created: {} (HWND {:?})", id, hwnd);
@@ -109,6 +110,8 @@ pub fn create_pin_window_at(
         img_h as i32,
         x as i32,
         y as i32,
+        id.clone(),
+        app.clone(),
     )?;
 
     log::info!("Native pin window (at) created: {} (HWND {:?})", id, hwnd);
@@ -158,10 +161,15 @@ pub fn close_pin_window(app: AppHandle, id: String) -> Result<(), String> {
     // Try native HWND registry first
     if let Some(reg) = app.try_state::<PinRegistry>() {
         if let Ok(mut map) = reg.0.lock() {
-            if let Some(h) = map.remove(&id) {
-                let hwnd = HWND(h as *mut std::ffi::c_void);
-                unsafe {
-                    let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+            if let Some(h) = map.get(&id) {
+                let hwnd = HWND(*h as *mut std::ffi::c_void);
+                // DestroyWindow triggers WM_DESTROY which will remove from registry via pin_id
+                let result = unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd)
+                };
+                if result.is_err() {
+                    // If DestroyWindow failed, manually remove from registry
+                    map.remove(&id);
                 }
                 return Ok(());
             }
@@ -183,7 +191,9 @@ pub fn resize_pin_window(
 ) -> Result<(), String> {
     if let Some(hwnd) = get_pin_hwnd(&app, &id) {
         unsafe {
-            let _ = MoveWindow(hwnd, 0, 0, width as i32, height as i32, true);
+            let mut rect = std::mem::zeroed();
+            let _ = GetWindowRect(hwnd, &mut rect);
+            let _ = MoveWindow(hwnd, rect.left, rect.top, width as i32, height as i32, true);
         }
     }
     Ok(())

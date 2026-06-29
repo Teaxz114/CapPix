@@ -13,6 +13,13 @@ use std::sync::Mutex;
 use tauri::{Listener, Manager};
 
 pub fn run() {
+    // Install panic hook to log instead of silent crash
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("[PANIC] {}", info);
+        default_hook(info);
+    }));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -189,6 +196,7 @@ pub fn run() {
             commands::capture::capture_region,
             commands::capture::get_windows,
             commands::capture::get_window_at_point,
+            commands::clipboard::trigger_capture,
             commands::hotkey::get_hotkeys,
             commands::hotkey::set_hotkey,
             commands::hotkey::toggle_game_mode,

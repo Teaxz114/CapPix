@@ -170,9 +170,11 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useRouter } from "vue-router";
 import OcrPanel from "../components/OcrPanel.vue";
 
 const overlayRef = ref<HTMLDivElement | null>(null);
+const router = useRouter();
 const magnifierCanvas = ref<HTMLCanvasElement | null>(null);
 const ocrPanelRef = ref<InstanceType<typeof OcrPanel> | null>(null);
 
@@ -884,10 +886,7 @@ async function restoreMainWindow() {
     await win.setSize(new (await import("@tauri-apps/api/dpi")).LogicalSize(800, 600));
     await win.center();
     // Navigate back to home using Vue Router
-    const appEl = document.querySelector('#app') as any;
-    if (appEl?.__vue_app__) {
-      appEl.__vue_app__.config.globalProperties.$router.push('/');
-    }
+    router.push("/");
   } catch (e) {
     console.error("Failed to restore window:", e);
   }

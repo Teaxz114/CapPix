@@ -27,8 +27,7 @@ const router = createRouter({
     },
     {
       path: "/pin",
-      name: "pin",
-      component: () => import("../views/PinView.vue"),
+      redirect: "/",
     },
   ],
 });

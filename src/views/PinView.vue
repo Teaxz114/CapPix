@@ -43,9 +43,11 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useRouter } from "vue-router";
 
 const imageData = ref("");
 const scale = ref(1);
+const router = useRouter();
 const pinId = ref("");
 const opacity = ref(1);
 const clickthrough = ref(false);
@@ -217,7 +219,7 @@ async function close() {
         const { LogicalSize } = await import("@tauri-apps/api/dpi");
         await win.setSize(new LogicalSize(800, 600));
         await win.center();
-        window.location.hash = '/';
+        router.push("/");
       } catch (_) {}
     } else {
       // We're in a separate pin window — safe to close

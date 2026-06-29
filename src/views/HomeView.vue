@@ -58,6 +58,29 @@
       CapPix v0.1.0 | MIT License
     </footer>
     <RecordingBar />
+
+    <!-- Record Dialog -->
+    <div v-if="showRecordDialog" class="dialog-overlay" @click.self="showRecordDialog = false">
+      <div class="dialog-box">
+        <h3>{{ recordMode === 'gif' ? 'GIF 录制' : '录屏设置' }}</h3>
+        <div class="dialog-field">
+          <label><input type="checkbox" v-model="recordRegion" /> 选择区域（默认全屏）</label>
+        </div>
+        <div v-if="recordMode === 'video'" class="dialog-field">
+          <label><input type="checkbox" v-model="recordAudio" /> 录制系统声音</label>
+        </div>
+        <div v-if="recordMode === 'gif'" class="dialog-field">
+          <label>录制时长: {{ gifDuration }}秒</label>
+          <input type="range" v-model.number="gifDuration" min="1" max="30" step="1" />
+        </div>
+        <div class="dialog-actions">
+          <button @click="showRecordDialog = false" class="btn-cancel">取消</button>
+          <button @click="recordMode === 'gif' ? startGifRecording() : startRecording()" class="btn-primary">
+            开始录制
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -87,7 +110,14 @@ const utilTools = [
   { id: "pin_clipboard", name: "贴图", shortcut: "" },
   { id: "color_picker", name: "取色器", shortcut: "" },
   { id: "screen_record", name: "录屏", shortcut: "" },
+  { id: "gif_record", name: "GIF 录制", shortcut: "" },
 ];
+
+const showRecordDialog = ref(false);
+const recordMode = ref<"video" | "gif">("video");
+const recordRegion = ref(false);
+const recordAudio = ref(false);
+const gifDuration = ref(5);
 
 onMounted(async () => {
   try {
@@ -113,7 +143,11 @@ function handleAction(id: string) {
     // Trigger capture directly via invoke + open overlay
     triggerCapture(id);
   } else if (id === "screen_record") {
-    startRecording();
+    recordMode.value = "video";
+    showRecordDialog.value = true;
+  } else if (id === "gif_record") {
+    recordMode.value = "gif";
+    showRecordDialog.value = true;
   } else if (id === "color_picker") {
     startColorPicker();
   } else if (id === "pin_clipboard") {
@@ -130,20 +164,60 @@ async function triggerCapture(id: string) {
 }
 
 async function startRecording() {
+  showRecordDialog.value = false;
   try {
+    const region = recordRegion.value ? await selectRegion() : null;
     const path = await invoke<string>("start_recording", {
       outputPath: null,
-      region: null,
-      withAudio: false,
+      region,
+      withAudio: recordAudio.value,
     });
     console.log("Recording started:", path);
   } catch (e) {
     const msg = String(e);
-    if (msg.includes("ffmpeg") || msg.includes("Failed to start")) {
+    if (msg.includes("FFmpeg") || msg.includes("ffmpeg") || msg.includes("Failed to start")) {
       alert("录屏需要 FFmpeg，请先安装并添加到 PATH。\n\n下载地址: https://ffmpeg.org/download.html\n\nWindows 推荐: https://www.gyan.dev/ffmpeg/builds/");
-    } else {
+    } else if (!msg.includes("cancel")) {
       alert("录屏启动失败: " + msg);
     }
+  }
+}
+
+async function startGifRecording() {
+  showRecordDialog.value = false;
+  try {
+    const region = recordRegion.value ? await selectRegion() : null;
+    const path = await invoke<string>("record_to_gif", {
+      outputPath: null,
+      region,
+      durationSecs: gifDuration.value,
+    });
+    alert(`GIF 已保存: ${path}`);
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("FFmpeg") || msg.includes("ffmpeg")) {
+      alert("GIF 录制需要 FFmpeg，请先安装并添加到 PATH。");
+    } else if (!msg.includes("cancel")) {
+      alert("GIF 录制失败: " + msg);
+    }
+  }
+}
+
+async function selectRegion(): Promise<[number, number, number, number] | null> {
+  // Use screenshot overlay to let user select a region
+  // Returns [x, y, w, h] or null if cancelled
+  try {
+    await invoke("trigger_capture", { mode: "capture_region" });
+    const { listen } = await import("@tauri-apps/api/event");
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 60000);
+      listen<{ x: number; y: number; w: number; h: number }>("region-selected", (event) => {
+        clearTimeout(timeout);
+        resolve([event.payload.x, event.payload.y, event.payload.w, event.payload.h]);
+      });
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -199,3 +273,22 @@ function goSettings() {
   router.push("/settings");
 }
 </script>
+
+<style scoped>
+.dialog-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center; z-index: 9999;
+}
+.dialog-box {
+  background: #1f2937; border: 1px solid #374151; border-radius: 12px;
+  padding: 24px; min-width: 340px; max-width: 420px;
+}
+.dialog-box h3 { color: #e5e7eb; font-size: 16px; margin: 0 0 16px; }
+.dialog-field { margin-bottom: 12px; color: #d1d5db; font-size: 14px; }
+.dialog-field label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.dialog-field input[type="range"] { width: 100%; margin-top: 4px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.btn-cancel { background: #374151; color: #d1d5db; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+.btn-primary { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+.btn-primary:hover { background: #1d4ed8; }
+</style>

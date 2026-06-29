@@ -24,6 +24,12 @@
       </div>
     </div>
     <div v-else class="history-empty">暂无截图记录</div>
+    <div v-if="entries.length && hasMore" class="history-loadmore">
+      <button @click="loadMore" :disabled="loadingMore" class="btn-loadmore">
+        {{ loadingMore ? "加载中..." : "加载更多" }}
+      </button>
+      <span class="history-count-inline">已显示 {{ entries.length }} / {{ totalCount }} 条</span>
+    </div>
   </div>
 </template>
 
@@ -45,6 +51,8 @@ const entries = ref<ScreenshotRecord[]>([]);
 const thumbnails = ref<Record<number, string>>({}); // id -> base64 data URL
 const totalCount = ref(0);
 const searchQuery = ref("");
+const hasMore = ref(true);
+const loadingMore = ref(false);
 
 onMounted(() => { loadHistory(); });
 
@@ -52,6 +60,7 @@ async function loadHistory() {
   try {
     entries.value = await invoke<ScreenshotRecord[]>("history_list", { limit: 50, offset: 0 });
     totalCount.value = await invoke<number>("history_count");
+    hasMore.value = entries.value.length < totalCount.value;
     // Load thumbnails on demand (only visible items)
     for (const entry of entries.value) {
       loadThumbnail(entry.id, entry.image_path);
@@ -59,12 +68,32 @@ async function loadHistory() {
   } catch (e) { console.error("Failed to load history:", e); }
 }
 
+async function loadMore() {
+  if (loadingMore.value || !hasMore.value) return;
+  loadingMore.value = true;
+  try {
+    const more = await invoke<ScreenshotRecord[]>("history_list", { limit: 50, offset: entries.value.length });
+    entries.value.push(...more);
+    hasMore.value = more.length === 50 && entries.value.length < totalCount.value;
+    for (const entry of more) {
+      loadThumbnail(entry.id, entry.image_path);
+    }
+  } catch (e) { console.error("Failed to load more:", e); }
+  loadingMore.value = false;
+}
+
 async function loadThumbnail(id: number, imagePath: string) {
   if (thumbnails.value[id]) return;
   try {
-    const base64 = await invoke<string>("get_screenshot_image", { imagePath });
+    const base64 = await invoke<string>("get_screenshot_thumbnail", { imagePath });
     thumbnails.value[id] = `data:image/png;base64,${base64}`;
-  } catch (e) { console.error("Failed to load thumbnail:", id, e); }
+  } catch (_e) {
+    // Fallback to full image if thumbnail not available
+    try {
+      const base64 = await invoke<string>("get_screenshot_image", { imagePath });
+      thumbnails.value[id] = `data:image/png;base64,${base64}`;
+    } catch (e) { console.error("Failed to load thumbnail:", id, e); }
+  }
 }
 
 async function onSearch() {
@@ -178,4 +207,9 @@ function truncate(s: string, n: number) {
 }
 .btn-delete:hover { color: #ef4444; }
 .history-empty { text-align: center; color: #6b7280; padding: 40px; }
+.history-loadmore { text-align: center; padding: 16px; }
+.btn-loadmore { background: #374151; color: #d1d5db; border: none; padding: 8px 24px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.btn-loadmore:hover { background: #4b5563; }
+.btn-loadmore:disabled { opacity: 0.5; cursor: not-allowed; }
+.history-count-inline { color: #6b7280; font-size: 12px; margin-left: 12px; }
 </style>

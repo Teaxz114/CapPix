@@ -40,6 +40,7 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useRouter } from "vue-router";
 import { Canvas as FabricCanvas, Rect, Ellipse, Line, IText, Path, PencilBrush, Group, Image as FabricImage } from "fabric";
 import jsQR from "jsqr";
 import QRCode from "qrcode";
@@ -65,6 +66,7 @@ const canvasRef = ref<InstanceType<typeof CanvasComponent> | null>(null);
 const imageBase64 = ref("");
 const currentTool = ref("rect");
 const configStore = useConfigStore();
+const router = useRouter();
 const currentColor = ref(configStore.config.defaultColor);
 const currentStrokeWidth = ref(configStore.config.defaultStrokeWidth);
 const currentFill = ref("transparent");
@@ -747,7 +749,7 @@ function onKeyDown(e: KeyboardEvent) {
 // History management
 function saveHistory() {
   if (!fabricCanvas) return;
-  const json = JSON.stringify(fabricCanvas.toJSON());
+  const json = JSON.stringify(fabricCanvas.toObject(["_cappixMosaic", "_cappixBlur"]));
   // Remove any future states after current index
   historyStack.value = historyStack.value.slice(0, historyIndex.value + 1);
   historyStack.value.push(json);
@@ -890,7 +892,7 @@ async function restoreMainWindow() {
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     await win.setSize(new LogicalSize(800, 600));
     await win.center();
-    window.location.hash = '/';
+    router.push("/");
   } catch (e) {
     console.error("Failed to restore window:", e);
   }

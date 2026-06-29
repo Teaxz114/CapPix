@@ -69,12 +69,12 @@ pub fn setup_tray(app: &App) -> anyhow::Result<()> {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
+                    // Navigate via Tauri event — the frontend App.vue listens for "navigate"
                     let route = if event.id.as_ref() == "history" {
                         "history"
                     } else {
                         "settings"
                     };
-                    // Navigate via Tauri event (consistent with screenshot/annotate)
                     let _ = app.emit("navigate", route);
                 }
             }
@@ -85,6 +85,28 @@ pub fn setup_tray(app: &App) -> anyhow::Result<()> {
                 let _ = app.emit("tray-action", "gif_record");
             }
             "quit" => {
+                // Clean up: stop recording if active
+                if let Some(state) = app.try_state::<crate::recording::RecordingManager>() {
+                    if let Ok(s) = state.state.lock() {
+                        if s.is_recording {
+                            drop(s);
+                            let _ = crate::recording::stop_recording(app.clone());
+                        }
+                    }
+                }
+                // Clean up: close all pin windows
+                if let Some(reg) = app.try_state::<crate::pin::PinRegistry>() {
+                    if let Ok(mut map) = reg.0.lock() {
+                        let hwnds: Vec<(String, isize)> = map.drain().collect();
+                        drop(map);
+                        for (_id, h) in hwnds {
+                            let hwnd = windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void);
+                            unsafe {
+                                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+                            }
+                        }
+                    }
+                }
                 app.exit(0);
             }
             _ => {}
