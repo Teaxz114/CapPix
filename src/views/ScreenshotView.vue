@@ -104,29 +104,31 @@
       class="action-toolbar"
       :style="toolbarPosition"
       @mousedown.stop
+      @mouseup.stop
+      @click.stop
     >
-      <button class="toolbar-btn" @click="actionAnnotate" title="标注">
+      <button class="toolbar-btn" @click.stop="actionAnnotate" title="标注">
         <span class="toolbar-icon">✏️</span>
         <span class="toolbar-label">标注</span>
       </button>
-      <button class="toolbar-btn" @click="actionCopy" title="复制">
+      <button class="toolbar-btn" @click.stop="actionCopy" title="复制">
         <span class="toolbar-icon">📋</span>
         <span class="toolbar-label">复制</span>
       </button>
-      <button class="toolbar-btn" @click="actionPin" title="贴图">
+      <button class="toolbar-btn" @click.stop="actionPin" title="贴图">
         <span class="toolbar-icon">📌</span>
         <span class="toolbar-label">贴图</span>
       </button>
-      <button class="toolbar-btn" @click="actionOcr" title="OCR">
+      <button class="toolbar-btn" @click.stop="actionOcr" title="OCR">
         <span class="toolbar-icon">🔍</span>
         <span class="toolbar-label">OCR</span>
       </button>
-      <button class="toolbar-btn" @click="actionSave" title="保存">
+      <button class="toolbar-btn" @click.stop="actionSave" title="保存">
         <span class="toolbar-icon">💾</span>
         <span class="toolbar-label">保存</span>
       </button>
       <div class="toolbar-separator"></div>
-      <button class="toolbar-btn toolbar-btn-cancel" @click="cancelCapture" title="取消">
+      <button class="toolbar-btn toolbar-btn-cancel" @click.stop="cancelCapture" title="取消">
         <span class="toolbar-icon">✕</span>
       </button>
     </div>
@@ -873,20 +875,34 @@ function ocrRegion() {
 
 async function cancelCapture() {
   contextMenu.value = null;
+  // Reset all selection/capture state so a stale selection doesn't linger
+  // and re-show the toolbar the next time the overlay opens.
+  isSelecting.value = false;
+  hasSelection.value = false;
+  activeHandle.value = null;
+  capturedBase64 = "";
+  showMagnifier.value = false;
+  windowHighlight.value = null;
   await restoreMainWindow();
 }
 
 async function restoreMainWindow() {
-  // Restore main window from fullscreen overlay mode to normal mode
+  // Restore main window from fullscreen overlay mode to normal mode.
+  // Navigate FIRST (cheap, synchronous-ish) so the user always leaves the
+  // overlay even if a later window op throws; then resize/reposition.
+  try {
+    router.push("/");
+  } catch (e) {
+    console.error("Failed to navigate home:", e);
+  }
   try {
     const win = getCurrentWindow();
-    await win.setDecorations(true);
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
     await win.setAlwaysOnTop(false);
+    await win.setDecorations(true);
     await win.setResizable(true);
-    await win.setSize(new (await import("@tauri-apps/api/dpi")).LogicalSize(800, 600));
+    await win.setSize(new LogicalSize(800, 600));
     await win.center();
-    // Navigate back to home using Vue Router
-    router.push("/");
   } catch (e) {
     console.error("Failed to restore window:", e);
   }
@@ -1014,7 +1030,7 @@ async function restoreMainWindow() {
   border: 1px solid #374151;
   border-radius: 8px;
   padding: 4px 6px;
-  z-index: 9999;
+  z-index: 10001;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   animation: toolbar-in 0.15s ease-out;
 }
