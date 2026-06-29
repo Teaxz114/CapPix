@@ -101,7 +101,7 @@ pub async fn ocr_image(app: tauri::AppHandle, image_base64: String, language: Op
 }
 
 /// Local OCR via bundled cappix_ocr.exe or Python worker
-async fn ocr_image_local(app: &tauri::AppHandle, image_base64: &str, language: Option<&str>) -> Result<OcrResult, String> {
+async fn ocr_image_local(app: &tauri::AppHandle, image_base64: &str, _language: Option<&str>) -> Result<OcrResult, String> {
     let (program, args) = find_ocr_worker(app)?;
 
     log::info!("[OCR] Spawning local worker: {} {:?}", program, args);
