@@ -6,6 +6,12 @@ edition = "2021"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# By default, build in production mode (load bundled frontend, not localhost dev server).
+# This makes `cargo build --release` produce a working standalone EXE without needing `tauri build`.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-plugin-shell = "2"
