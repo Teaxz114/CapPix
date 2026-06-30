@@ -125,6 +125,11 @@ pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
     let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
 
+    // Remove window chrome (title bar + border) and stay on top for the overlay.
+    // Without this the screenshot capture shows the app's own window frame.
+    let _ = window.set_decorations(false);
+    let _ = window.set_always_on_top(true);
+
     // Show the window FIRST — WebView2 may not execute JS or deliver events
     // while the window is hidden (SW_HIDE state).
     let _ = window.show();
