@@ -575,7 +575,7 @@ async function actionPin() {
     console.error("Pin failed:", e);
     return;
   }
-  await restoreMainWindow();
+  await dismissOverlay();
 }
 
 async function actionOcr() {
@@ -600,7 +600,7 @@ async function actionSave() {
     console.error("Save failed:", e);
     return;
   }
-  await restoreMainWindow();
+  await dismissOverlay();
 }
 
 async function actionCopy() {
@@ -612,7 +612,7 @@ async function actionCopy() {
     console.error("Copy failed:", e);
     return;
   }
-  await restoreMainWindow();
+  await dismissOverlay();
 }
 
 async function saveToHistory() {
@@ -875,36 +875,36 @@ function ocrRegion() {
 
 async function cancelCapture() {
   contextMenu.value = null;
-  // Reset all selection/capture state so a stale selection doesn't linger
-  // and re-show the toolbar the next time the overlay opens.
+  // Reset all selection/capture state so a stale selection doesn't linger.
   isSelecting.value = false;
   hasSelection.value = false;
   activeHandle.value = null;
   capturedBase64 = "";
   showMagnifier.value = false;
   windowHighlight.value = null;
-  await restoreMainWindow();
+  await dismissOverlay();
 }
 
-async function restoreMainWindow() {
-  // Restore main window from fullscreen overlay mode to normal mode.
-  // Navigate FIRST (cheap, synchronous-ish) so the user always leaves the
-  // overlay even if a later window op throws; then resize/reposition.
-  try {
-    router.push("/");
-  } catch (e) {
-    console.error("Failed to navigate home:", e);
-  }
+async function dismissOverlay() {
+  // Cancel = exit the screenshot overlay entirely and hide back to tray.
+  // PixPin behaviour: pressing ✕ / ESC does NOT pop up the main/settings window —
+  // it just dismisses the capture and the app goes back to idle in the tray.
   try {
     const win = getCurrentWindow();
+    // Hide first so the overlay disappears instantly.
+    await win.hide();
+    // Restore window chrome/size in the background so the NEXT capture or
+    // settings open starts from a clean normal-window state.
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     await win.setAlwaysOnTop(false);
     await win.setDecorations(true);
     await win.setResizable(true);
     await win.setSize(new LogicalSize(800, 600));
-    await win.center();
+    // Navigate the (now hidden) webview back to home so it's ready next time,
+    // but the window stays hidden — the user sees nothing pop up.
+    router.push("/");
   } catch (e) {
-    console.error("Failed to restore window:", e);
+    console.error("Failed to dismiss overlay:", e);
   }
 }
 </script>
