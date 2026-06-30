@@ -200,6 +200,7 @@ const endY = ref(0);
 
 // Captured region data (filled when user completes a selection)
 let capturedBase64 = "";
+let captureRegionPromise: Promise<string | null> | null = null;
 let isDismissingOverlay = false;
 
 // Magnifier state
@@ -409,8 +410,9 @@ function onKeyDown(e: KeyboardEvent) {
     }
   }
   // Enter key = confirm selection (go to annotate)
-  if (e.key === "Enter" && hasSelection.value && capturedBase64) {
-    navigateToAnnotate(capturedBase64);
+  if (e.key === "Enter" && hasSelection.value) {
+    e.preventDefault();
+    void actionAnnotate();
   }
 }
 
@@ -524,12 +526,25 @@ function onMouseUp(e: MouseEvent) {
 }
 
 async function doCaptureRegion(x: number, y: number, w: number, h: number, autoNavigate: boolean) {
+  captureRegionPromise = cropSelectedRegion(x, y, w, h);
+  const croppedBase64 = await captureRegionPromise;
+  captureRegionPromise = null;
+
+  if (!croppedBase64) return;
+
+  capturedBase64 = croppedBase64;
+  if (autoNavigate) {
+    await navigateToAnnotate(croppedBase64);
+  }
+}
+
+async function cropSelectedRegion(x: number, y: number, w: number, h: number): Promise<string | null> {
   // IMPORTANT: Don't re-capture the screen! The overlay is on screen,
   // so capture_region would include the overlay UI. Instead, crop from
   // the original full-screen screenshot data we already have.
   if (!screenshotData.value) {
     console.error("No screenshot data available for cropping");
-    return;
+    return null;
   }
   try {
     // Convert overlay-local logical pixels to screenshot image pixels
@@ -537,20 +552,27 @@ async function doCaptureRegion(x: number, y: number, w: number, h: number, autoN
     const scaleX = screenshotImage.value ? screenshotImage.value.naturalWidth / window.innerWidth : 1;
     const scaleY = screenshotImage.value ? screenshotImage.value.naturalHeight / window.innerHeight : 1;
 
-    const croppedBase64 = await invoke<string>("crop_image", {
+    return await invoke<string>("crop_image", {
       imageBase64: screenshotData.value,
       x: Math.round(x * scaleX),
       y: Math.round(y * scaleY),
       width: Math.round(w * scaleX),
       height: Math.round(h * scaleY),
     });
-    capturedBase64 = croppedBase64;
-    if (autoNavigate) {
-      await navigateToAnnotate(croppedBase64);
-    }
   } catch (err) {
     console.error("Failed to crop region:", err);
+    return null;
   }
+}
+
+async function getCapturedRegionForAction(): Promise<string | null> {
+  if (capturedBase64) return capturedBase64;
+  if (captureRegionPromise) {
+    const result = await captureRegionPromise;
+    if (result) capturedBase64 = result;
+    return result;
+  }
+  return null;
 }
 
 async function onDoubleClick() {
@@ -569,15 +591,17 @@ async function onDoubleClick() {
 // ===== Action toolbar handlers =====
 
 async function actionAnnotate() {
-  if (capturedBase64) {
-    await navigateToAnnotate(capturedBase64);
+  const image = await getCapturedRegionForAction();
+  if (image) {
+    await navigateToAnnotate(image);
   }
 }
 
 async function actionPin() {
-  if (!capturedBase64) return;
+  const image = await getCapturedRegionForAction();
+  if (!image) return;
   try {
-    await invoke("create_pin_window", { imageBase64: capturedBase64 });
+    await invoke("create_pin_window", { imageBase64: image });
   } catch (e) {
     console.error("Pin failed:", e);
     return;
@@ -586,21 +610,23 @@ async function actionPin() {
 }
 
 async function actionOcr() {
-  if (!capturedBase64) return;
+  const image = await getCapturedRegionForAction();
+  if (!image) return;
   // Show OCR panel with results
   if (ocrPanelRef.value) {
-    await ocrPanelRef.value.recognize(capturedBase64);
+    await ocrPanelRef.value.recognize(image);
   }
 }
 
 async function actionSave() {
-  if (!capturedBase64) return;
+  const image = await getCapturedRegionForAction();
+  if (!image) return;
   try {
     // Exit fullscreen overlay mode so save dialog is visible
     const win = getCurrentWindow();
     await win.setAlwaysOnTop(false);
     await win.setDecorations(true);
-    await invoke("save_image_to_file", { imageBase64: capturedBase64 });
+    await invoke("save_image_to_file", { imageBase64: image });
     saveToHistory();
   } catch (e) {
     // User cancelled save dialog or error — don't close overlay
@@ -611,9 +637,10 @@ async function actionSave() {
 }
 
 async function actionCopy() {
-  if (!capturedBase64) return;
+  const image = await getCapturedRegionForAction();
+  if (!image) return;
   try {
-    await invoke("copy_image_to_clipboard", { imageBase64: capturedBase64 });
+    await invoke("copy_image_to_clipboard", { imageBase64: image });
     saveToHistory();
   } catch (e) {
     console.error("Copy failed:", e);
