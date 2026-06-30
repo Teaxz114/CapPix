@@ -22,6 +22,34 @@ pub fn get_pending_annotate_image(state: tauri::State<PendingAnnotateImage>) -> 
 }
 
 #[tauri::command]
+pub fn dismiss_screenshot_overlay(
+    app: tauri::AppHandle,
+    pending: tauri::State<PendingScreenshot>,
+) -> Result<(), String> {
+    log::info!("dismiss_screenshot_overlay called");
+
+    // Drop stale screenshot data so the next capture starts cleanly.
+    if let Ok(mut data) = pending.0.lock() {
+        *data = None;
+    }
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    // Hide immediately: cancel should exit screenshot mode, not show any app page.
+    let _ = window.hide();
+
+    // Restore normal window state while hidden so later settings/history opens are normal.
+    let _ = window.set_always_on_top(false);
+    let _ = window.set_decorations(true);
+    let _ = window.set_resizable(true);
+    let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String> {
     let data = STANDARD.decode(&image_base64).map_err(|e| e.to_string())?;
     let img = image::load_from_memory(&data).map_err(|e| e.to_string())?;

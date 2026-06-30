@@ -207,6 +207,7 @@ pub fn run() {
             commands::clipboard::open_annotate_window,
             commands::clipboard::get_pending_screenshot,
             commands::clipboard::get_pending_annotate_image,
+            commands::clipboard::dismiss_screenshot_overlay,
             commands::clipboard::trigger_capture,
             commands::save::save_image_to_file,
             commands::save::save_image_to_path,

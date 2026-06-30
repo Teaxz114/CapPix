@@ -128,7 +128,13 @@
         <span class="toolbar-label">保存</span>
       </button>
       <div class="toolbar-separator"></div>
-      <button class="toolbar-btn toolbar-btn-cancel" @click.stop="cancelCapture" title="取消">
+      <button
+        class="toolbar-btn toolbar-btn-cancel"
+        @pointerdown.stop.prevent="cancelCapture"
+        @mousedown.stop.prevent="cancelCapture"
+        @click.stop.prevent="cancelCapture"
+        title="取消"
+      >
         <span class="toolbar-icon">✕</span>
       </button>
     </div>
@@ -194,6 +200,7 @@ const endY = ref(0);
 
 // Captured region data (filled when user completes a selection)
 let capturedBase64 = "";
+let isDismissingOverlay = false;
 
 // Magnifier state
 const showMagnifier = ref(true);
@@ -874,6 +881,8 @@ function ocrRegion() {
 }
 
 async function cancelCapture() {
+  if (isDismissingOverlay) return;
+  isDismissingOverlay = true;
   contextMenu.value = null;
   // Reset all selection/capture state so a stale selection doesn't linger.
   isSelecting.value = false;
@@ -882,7 +891,11 @@ async function cancelCapture() {
   capturedBase64 = "";
   showMagnifier.value = false;
   windowHighlight.value = null;
-  await dismissOverlay();
+  try {
+    await dismissOverlay();
+  } finally {
+    isDismissingOverlay = false;
+  }
 }
 
 async function dismissOverlay() {
@@ -890,21 +903,24 @@ async function dismissOverlay() {
   // PixPin behaviour: pressing ✕ / ESC does NOT pop up the main/settings window —
   // it just dismisses the capture and the app goes back to idle in the tray.
   try {
-    const win = getCurrentWindow();
-    // Hide first so the overlay disappears instantly.
-    await win.hide();
-    // Restore window chrome/size in the background so the NEXT capture or
-    // settings open starts from a clean normal-window state.
-    const { LogicalSize } = await import("@tauri-apps/api/dpi");
-    await win.setAlwaysOnTop(false);
-    await win.setDecorations(true);
-    await win.setResizable(true);
-    await win.setSize(new LogicalSize(800, 600));
-    // Navigate the (now hidden) webview back to home so it's ready next time,
-    // but the window stays hidden — the user sees nothing pop up.
+    // Use the Rust backend for this: it can hide and normalize the Tauri window
+    // reliably even when frontend pointer/click handling is in screenshot mode.
+    await invoke("dismiss_screenshot_overlay");
     router.push("/");
   } catch (e) {
-    console.error("Failed to dismiss overlay:", e);
+    console.error("Backend dismiss failed, falling back to frontend window API:", e);
+    try {
+      const win = getCurrentWindow();
+      await win.hide();
+      const { LogicalSize } = await import("@tauri-apps/api/dpi");
+      await win.setAlwaysOnTop(false);
+      await win.setDecorations(true);
+      await win.setResizable(true);
+      await win.setSize(new LogicalSize(800, 600));
+      router.push("/");
+    } catch (fallbackError) {
+      console.error("Failed to dismiss overlay:", fallbackError);
+    }
   }
 }
 </script>
