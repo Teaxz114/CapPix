@@ -124,6 +124,8 @@ struct HotkeyState {
     hotkeys: HashMap<i32, HotkeyConfig>,
     /// Next available atom ID
     next_id: i32,
+    /// Pending (id, modifiers, vk, shortcut) tuples to register on the message-loop thread
+    pending_registrations: Vec<(i32, HOT_KEY_MODIFIERS, u32, String)>,
 }
 
 impl HotkeyState {
@@ -131,6 +133,7 @@ impl HotkeyState {
         Self {
             hotkeys: HashMap::new(),
             next_id: 1,
+            pending_registrations: Vec::new(),
         }
     }
 }
@@ -183,41 +186,46 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     *state = Some(HotkeyState::new());
     let state_ref = state.as_mut().unwrap();
 
-    let hwnd = HWND(null_mut());
-
+    // Parse all shortcuts and assign IDs, but DON'T call RegisterHotKey yet —
+    // it must be called on the SAME thread that runs GetMessageW, otherwise
+    // WM_HOTKEY messages are posted to the wrong thread's queue and never received.
+    let mut hotkey_map: HashMap<i32, String> = HashMap::new();
     for config in &configs {
         if let Some((modifiers, vk)) = parse_shortcut(&config.shortcut) {
             let id = state_ref.next_id;
             state_ref.next_id += 1;
-
-            match unsafe { RegisterHotKey(hwnd, id, modifiers, vk) } {
-                Ok(()) => {
-                    eprintln!("[Hotkey] Registered: {} = {} (id={})", config.id, config.shortcut, id);
-                    state_ref.hotkeys.insert(id, config.clone());
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[Hotkey] Failed to register {} = {}: {}",
-                        config.id,
-                        config.shortcut,
-                        e
-                    );
-                }
-            }
+            state_ref.hotkeys.insert(id, config.clone());
+            hotkey_map.insert(id, config.id.clone());
+            // Store modifiers/vk for later registration in the message-loop thread
+            state_ref.pending_registrations.push((id, modifiers, vk, config.shortcut.clone()));
         } else {
             eprintln!("[Hotkey] Cannot parse shortcut: {} = {}", config.id, config.shortcut);
         }
     }
+    drop(state);
 
-    let hotkey_map: HashMap<i32, String> = state_ref
-        .hotkeys
-        .iter()
-        .map(|(id, config)| (*id, config.id.clone()))
-        .collect();
-
-    // Start message loop thread
+    // Start message loop thread — RegisterHotKey MUST be called here
     let app = app_handle.clone();
     std::thread::spawn(move || {
+        // Register hotkeys on THIS thread (same thread that will receive WM_HOTKEY)
+        {
+            let mut state = HOTKEY_STATE.lock().unwrap();
+            if let Some(state_ref) = state.as_mut() {
+                let hwnd = HWND(null_mut());
+                let pending = std::mem::take(&mut state_ref.pending_registrations);
+                for (id, modifiers, vk, shortcut) in pending {
+                    match unsafe { RegisterHotKey(hwnd, id, modifiers, vk) } {
+                        Ok(()) => {
+                            eprintln!("[Hotkey] Registered: id={} shortcut={}", id, shortcut);
+                        }
+                        Err(e) => {
+                            eprintln!("[Hotkey] FAILED to register id={} shortcut={}: {}", id, shortcut, e);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, HWND(null_mut()), 0, 0).0 > 0 {
