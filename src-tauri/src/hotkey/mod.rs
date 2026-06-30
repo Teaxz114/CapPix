@@ -192,11 +192,11 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
 
             match unsafe { RegisterHotKey(hwnd, id, modifiers, vk) } {
                 Ok(()) => {
-                    log::info!("[Hotkey] Registered: {} = {} (id={})", config.id, config.shortcut, id);
+                    eprintln!("[Hotkey] Registered: {} = {} (id={})", config.id, config.shortcut, id);
                     state_ref.hotkeys.insert(id, config.clone());
                 }
                 Err(e) => {
-                    log::warn!(
+                    eprintln!(
                         "[Hotkey] Failed to register {} = {}: {}",
                         config.id,
                         config.shortcut,
@@ -205,7 +205,7 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
                 }
             }
         } else {
-            log::warn!("[Hotkey] Cannot parse shortcut: {} = {}", config.id, config.shortcut);
+            eprintln!("[Hotkey] Cannot parse shortcut: {} = {}", config.id, config.shortcut);
         }
     }
 
@@ -224,7 +224,7 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
                 if msg.message == WM_HOTKEY {
                     let id = msg.wParam.0 as i32;
                     if let Some(name) = hotkey_map.get(&id) {
-                        log::info!("[Hotkey] Triggered: {}", name);
+                        eprintln!("[Hotkey] Triggered: {}", name);
                         let _ = app.emit("hotkey", name.as_str());
                     }
                 }

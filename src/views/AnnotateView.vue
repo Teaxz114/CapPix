@@ -18,7 +18,7 @@
       @pin="pinToDesktop"
       @ocr="performOcr"
     />
-    <Canvas
+    <CanvasComponent
       ref="canvasRef"
       :image-base64="imageBase64"
     />
@@ -88,13 +88,17 @@ let activeObject: Rect | Ellipse | Line | IText | Path | null = null;
 let unlisten: UnlistenFn | null = null;
 
 onMounted(async () => {
+  console.log("[AnnotateView] onMounted called");
   // Try to get image data from PendingAnnotateImage (set by Rust before window creation)
   try {
     const data = await invoke<string | null>("get_pending_annotate_image");
+    console.log("[AnnotateView] get_pending_annotate_image returned:", data ? `(has data, len=${data.length})` : "(null)");
     if (data) {
       imageBase64.value = data;
     }
-  } catch (_) {}
+  } catch (e) {
+    console.error("[AnnotateView] Failed to get pending annotate image:", e);
+  }
 
   // Also listen for annotate-image event as fallback (e.g. from history view)
   unlisten = await listen<string>("annotate-image", (event) => {
@@ -120,10 +124,17 @@ onUnmounted(() => {
 });
 
 function initCanvasTools() {
+  console.log("[AnnotateView] initCanvasTools called, canvasRef =", canvasRef.value ? "(exists)" : "(null)");
   const canvasInstance = canvasRef.value?.getCanvas?.();
-  if (!canvasInstance) return;
+  console.log("[AnnotateView] getCanvas() returned:", canvasInstance ? "(exists)" : "(null)");
+  if (!canvasInstance) {
+    console.warn("[AnnotateView] Canvas not ready yet, will retry in 500ms");
+    setTimeout(initCanvasTools, 500);
+    return;
+  }
 
   fabricCanvas = canvasInstance as FabricCanvas;
+  console.log("[AnnotateView] fabricCanvas assigned, binding events");
 
   // Save initial state
   saveHistory();

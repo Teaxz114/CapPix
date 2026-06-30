@@ -228,6 +228,8 @@ pub async fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), 
 
 #[tauri::command]
 pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Result<(), String> {
+    eprintln!("[open_annotate_window] called, image_base64 length: {}", image_base64.len());
+
     // Close screenshot overlay if it exists (from dedicated window attempt)
     if let Some(overlay) = app.get_webview_window("screenshot-overlay") {
         let _ = overlay.close();
@@ -237,12 +239,16 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     if let Some(state) = app.try_state::<PendingAnnotateImage>() {
         if let Ok(mut data) = state.0.lock() {
             *data = Some(image_base64);
+            eprintln!("[open_annotate_window] PendingAnnotateImage stored");
         }
+    } else {
+        eprintln!("[open_annotate_window] ERROR: PendingAnnotateImage state not found!");
     }
 
     // Reuse main window for annotate — restore to normal state
     let window = app.get_webview_window("main")
         .ok_or("Main window not found")?;
+    eprintln!("[open_annotate_window] main window found, current visible: {}", window.is_visible().unwrap_or(false));
 
     let _ = window.set_decorations(true);
     let _ = window.set_always_on_top(false);
@@ -250,9 +256,11 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
     let _ = window.center();
     let _ = window.show();
+    eprintln!("[open_annotate_window] window restored and shown");
 
     // Navigate via Tauri event (same pattern as open_screenshot_overlay)
     let _ = app.emit("navigate", "annotate");
+    eprintln!("[open_annotate_window] navigate event emitted");
 
     let _ = window.set_focus();
 

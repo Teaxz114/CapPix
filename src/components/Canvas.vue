@@ -23,6 +23,10 @@ defineExpose({
 
 onMounted(async () => {
   await nextTick();
+  console.log("[Canvas] onMounted, canvasEl =", canvasEl.value ? "(exists)" : "(null)", ", container =", canvasContainer.value ? "(exists)" : "(null)");
+  if (canvasContainer.value) {
+    console.log("[Canvas] container size:", canvasContainer.value.clientWidth, "x", canvasContainer.value.clientHeight);
+  }
   initCanvas();
 });
 
@@ -34,11 +38,23 @@ onUnmounted(() => {
 });
 
 function initCanvas() {
-  if (!canvasEl.value || !canvasContainer.value) return;
+  console.log("[Canvas] initCanvas called");
+  if (!canvasEl.value || !canvasContainer.value) {
+    console.warn("[Canvas] canvasEl or container not ready, retrying in 200ms");
+    setTimeout(initCanvas, 200);
+    return;
+  }
 
   const container = canvasContainer.value;
   const width = container.clientWidth;
   const height = container.clientHeight;
+  console.log("[Canvas] container size:", width, "x", height);
+
+  if (width === 0 || height === 0) {
+    console.warn("[Canvas] container has zero size, retrying in 200ms");
+    setTimeout(initCanvas, 200);
+    return;
+  }
 
   fabricCanvas = new Canvas(canvasEl.value, {
     width,
@@ -47,6 +63,7 @@ function initCanvas() {
     selection: true,
     preserveObjectStacking: true,
   });
+  console.log("[Canvas] fabricCanvas created:", fabricCanvas ? "(exists)" : "(null)");
 
   // Load the screenshot as background
   if (props.imageBase64) {

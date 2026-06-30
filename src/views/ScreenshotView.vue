@@ -591,9 +591,13 @@ async function onDoubleClick() {
 // ===== Action toolbar handlers =====
 
 async function actionAnnotate() {
+  console.log("[actionAnnotate] called, capturedBase64 =", capturedBase64 ? "(has data)" : "(empty)", ", captureRegionPromise =", captureRegionPromise ? "(pending)" : "(null)");
   const image = await getCapturedRegionForAction();
+  console.log("[actionAnnotate] getCapturedRegionForAction resolved:", image ? "(has data)" : "(null)");
   if (image) {
     await navigateToAnnotate(image);
+  } else {
+    console.error("[actionAnnotate] No image data available — annotate will not open");
   }
 }
 
@@ -672,11 +676,13 @@ async function saveToHistory() {
 }
 
 async function navigateToAnnotate(imageBase64: string) {
+  console.log("[navigateToAnnotate] invoking open_annotate_window, imageBase64 length:", imageBase64.length);
   try {
     // open_annotate_window will store image data and navigate main window
     await invoke("open_annotate_window", { imageBase64 });
+    console.log("[navigateToAnnotate] open_annotate_window succeeded");
   } catch (e) {
-    console.error("Failed to open annotate window:", e);
+    console.error("[navigateToAnnotate] Failed to open annotate window:", e);
   }
 }
 

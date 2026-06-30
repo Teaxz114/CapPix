@@ -91,7 +91,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.listen("hotkey", move |event| {
                 let payload = event.payload().to_string();
-                log::info!("Hotkey event received: {}", payload);
+                eprintln!("[hotkey handler] Received event: {}", payload);
 
                 if payload.contains("capture_region") {
                     let app = app_handle.clone();
@@ -100,18 +100,12 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.hide();
                         }
-                        // Pump the Windows message loop to ensure the hide is processed.
-                        // win.hide() dispatches to the main thread, but from a Tokio worker
-                        // the actual SW_HIDE may not execute until the main thread processes it.
-                        // We need to wait long enough for: dispatch → main thread processes →
-                        // DWM recomposites the desktop (one vsync ~16ms).
-                        //
-                        // 200ms gives ample time for the hide to take effect and the DWM to
-                        // recompose the desktop without the CapPix window.
+                        eprintln!("[hotkey handler] capture_region: window hidden, waiting 200ms");
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
+                                eprintln!("[hotkey handler] capture_region: screen captured, storing pending");
                                 // Store screenshot data for overlay to pick up
                                 if let Some(state) = app.try_state::<commands::clipboard::PendingScreenshot>() {
                                     if let Ok(mut data) = state.0.lock() {
@@ -119,12 +113,13 @@ pub fn run() {
                                     }
                                 }
                                 if let Err(e) = commands::clipboard::open_screenshot_overlay(app.clone()) {
-                                    log::error!("Failed to open overlay: {}", e);
+                                    eprintln!("[hotkey handler] Failed to open overlay: {}", e);
                                     return;
                                 }
+                                eprintln!("[hotkey handler] capture_region: overlay opened");
                             }
                             Err(e) => {
-                                log::error!("Capture failed: {}", e);
+                                eprintln!("[hotkey handler] Capture failed: {}", e);
                                 // Restore window on failure
                                 if let Some(win) = app.get_webview_window("main") {
                                     let _ = win.show();
@@ -139,16 +134,19 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.hide();
                         }
+                        eprintln!("[hotkey handler] capture_fullscreen: window hidden, waiting 200ms");
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
+                                eprintln!("[hotkey handler] capture_fullscreen: screen captured, opening annotate");
                                 if let Err(e) = commands::clipboard::open_annotate_window(app.clone(), result.image_base64) {
-                                    log::error!("Failed to open annotate window: {}", e);
+                                    eprintln!("[hotkey handler] Failed to open annotate: {}", e);
                                 }
+                                eprintln!("[hotkey handler] capture_fullscreen: annotate window opened");
                             }
                             Err(e) => {
-                                log::error!("Capture failed: {}", e);
+                                eprintln!("[hotkey handler] Capture failed: {}", e);
                                 if let Some(win) = app.get_webview_window("main") {
                                     let _ = win.show();
                                 }
@@ -162,10 +160,12 @@ pub fn run() {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.hide();
                         }
+                        eprintln!("[hotkey handler] capture_window: window hidden, waiting 200ms");
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
                         match crate::capture::screen::capture_screen(0) {
                             Ok(result) => {
+                                eprintln!("[hotkey handler] capture_window: screen captured, storing pending");
                                 // Store screenshot data for overlay to pick up
                                 if let Some(state) = app.try_state::<commands::clipboard::PendingScreenshot>() {
                                     if let Ok(mut data) = state.0.lock() {
@@ -173,12 +173,13 @@ pub fn run() {
                                     }
                                 }
                                 if let Err(e) = commands::clipboard::open_screenshot_overlay(app.clone()) {
-                                    log::error!("Failed to open overlay: {}", e);
+                                    eprintln!("[hotkey handler] Failed to open overlay: {}", e);
                                     return;
                                 }
+                                eprintln!("[hotkey handler] capture_window: overlay opened");
                             }
                             Err(e) => {
-                                log::error!("Capture failed: {}", e);
+                                eprintln!("[hotkey handler] Capture failed: {}", e);
                                 if let Some(win) = app.get_webview_window("main") {
                                     let _ = win.show();
                                 }
@@ -208,7 +209,6 @@ pub fn run() {
             commands::clipboard::get_pending_screenshot,
             commands::clipboard::get_pending_annotate_image,
             commands::clipboard::dismiss_screenshot_overlay,
-            commands::clipboard::trigger_capture,
             commands::save::save_image_to_file,
             commands::save::save_image_to_path,
             commands::save::prepare_save_path,
