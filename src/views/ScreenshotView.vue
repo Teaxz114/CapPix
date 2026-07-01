@@ -123,6 +123,10 @@
         <span class="toolbar-icon">🔍</span>
         <span class="toolbar-label">OCR</span>
       </button>
+      <button class="toolbar-btn" @click.stop="actionTranslate" title="翻译">
+        <span class="toolbar-icon">🌐</span>
+        <span class="toolbar-label">翻译</span>
+      </button>
       <button class="toolbar-btn" @click.stop="actionSave" title="保存">
         <span class="toolbar-icon">💾</span>
         <span class="toolbar-label">保存</span>
@@ -619,6 +623,15 @@ async function actionOcr() {
   // Show OCR panel with results
   if (ocrPanelRef.value) {
     await ocrPanelRef.value.recognize(image);
+  }
+}
+
+async function actionTranslate() {
+  const image = await getCapturedRegionForAction();
+  if (!image) return;
+  // Screenshot-translate: OCR the region then auto-translate the result
+  if (ocrPanelRef.value) {
+    await ocrPanelRef.value.recognize(image, true);
   }
 }
 

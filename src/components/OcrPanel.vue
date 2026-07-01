@@ -80,9 +80,9 @@ const error = ref("");
 const result = ref<OcrResult | null>(null);
 const translation = ref<TranslateResult | null>(null);
 const translating = ref(false);
-const targetLang = ref("en");
+const targetLang = ref("zh");
 
-async function recognize(imageBase64: string) {
+async function recognize(imageBase64: string, autoTranslate = false) {
   visible.value = true;
   loading.value = true;
   error.value = "";
@@ -92,6 +92,9 @@ async function recognize(imageBase64: string) {
     result.value = await invoke<OcrResult>("ocr_image", { imageBase64, language: "chs" });
     if (result.value?.error) {
       error.value = result.value.error;
+    } else if (autoTranslate && result.value?.text) {
+      // Auto-translate right after OCR completes (screenshot-translate flow)
+      await translate();
     }
   } catch (e) {
     const msg = String(e);

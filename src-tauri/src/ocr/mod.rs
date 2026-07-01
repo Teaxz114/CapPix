@@ -273,21 +273,35 @@ pub async fn ocr_translate(
     text: String,
     target_lang: Option<String>,
 ) -> Result<TranslateResult, String> {
-    let target = target_lang.unwrap_or_else(|| "en".to_string());
+    if text.trim().is_empty() {
+        return Err("没有可翻译的文本".to_string());
+    }
+
+    let target = target_lang.unwrap_or_else(|| "zh".to_string());
 
     // Determine source language heuristically
     let source_lang = detect_language(&text);
 
-    // If source and target are the same, swap target
+    // If source and target are the same, swap target so translation is meaningful
     let effective_target = if source_lang == target {
         if target == "en" { "zh".to_string() } else { "en".to_string() }
     } else {
         target
     };
 
+    // Map short codes to MyMemory-friendly codes for better accuracy
+    let map_lang = |l: &str| -> String {
+        match l {
+            "zh" => "zh-CN".to_string(),
+            other => other.to_string(),
+        }
+    };
+    let src_code = map_lang(source_lang);
+    let tgt_code = map_lang(&effective_target);
+
     // Use MyMemory free translation API (no key required, 5000 chars/day)
     let encoded_text = urlencoding::encode(&text);
-    let lang_pair = format!("{}|{}", source_lang, effective_target);
+    let lang_pair = format!("{}|{}", src_code, tgt_code);
     let url = format!(
         "https://api.mymemory.translated.net/get?q={}&langpair={}",
         encoded_text, lang_pair
@@ -299,17 +313,23 @@ pub async fn ocr_translate(
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Translation request failed: {}", e))?;
+        .map_err(|e| format!("翻译请求失败: {}", e))?;
 
     let body: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse translation response: {}", e))?;
+        .map_err(|e| format!("翻译响应解析失败: {}", e))?;
 
     let translated = body["responseData"]["translatedText"]
         .as_str()
         .unwrap_or("")
         .to_string();
+
+    if translated.is_empty() {
+        // Surface MyMemory's error detail if present
+        let detail = body["responseDetails"].as_str().unwrap_or("未知错误");
+        return Err(format!("翻译失败: {}", detail));
+    }
 
     Ok(TranslateResult {
         original: text,
