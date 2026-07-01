@@ -2,14 +2,23 @@ use std::collections::HashMap;
 use std::ptr::null_mut;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, WPARAM, LPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetMessageW, PostThreadMessageW, MSG, WM_HOTKEY, WM_USER,
+};
+
+/// Custom WM_USER messages for the hotkey message-loop thread
+const WM_USER_REGISTER: u32 = WM_USER + 1;
+const WM_USER_UNREGISTER: u32 = WM_USER + 2;
 
 /// Game mode state — when active, all global hotkeys are disabled
 static GAME_MODE: Mutex<bool> = Mutex::new(false);
+
+/// Thread ID of the message-loop thread (set when it starts, used by set_hotkey)
+static MSG_THREAD_ID: Mutex<u32> = Mutex::new(0);
 
 /// A single hotkey definition
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -189,13 +198,11 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     // Parse all shortcuts and assign IDs, but DON'T call RegisterHotKey yet —
     // it must be called on the SAME thread that runs GetMessageW, otherwise
     // WM_HOTKEY messages are posted to the wrong thread's queue and never received.
-    let mut hotkey_map: HashMap<i32, String> = HashMap::new();
     for config in &configs {
         if let Some((modifiers, vk)) = parse_shortcut(&config.shortcut) {
             let id = state_ref.next_id;
             state_ref.next_id += 1;
             state_ref.hotkeys.insert(id, config.clone());
-            hotkey_map.insert(id, config.id.clone());
             // Store modifiers/vk for later registration in the message-loop thread
             state_ref.pending_registrations.push((id, modifiers, vk, config.shortcut.clone()));
         } else {
@@ -207,6 +214,13 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     // Start message loop thread — RegisterHotKey MUST be called here
     let app = app_handle.clone();
     std::thread::spawn(move || {
+        // Store this thread's ID so set_hotkey can PostThreadMessage to us
+        let thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+        {
+            let mut tid = MSG_THREAD_ID.lock().unwrap();
+            *tid = thread_id;
+        }
+
         // Register hotkeys on THIS thread (same thread that will receive WM_HOTKEY)
         {
             let mut state = HOTKEY_STATE.lock().unwrap();
@@ -228,13 +242,40 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
 
         let mut msg = MSG::default();
         unsafe {
-            while GetMessageW(&mut msg, HWND(null_mut()), 0, 0).0 > 0 {
+            loop {
+                if GetMessageW(&mut msg, HWND(null_mut()), 0, 0).0 <= 0 {
+                    break;
+                }
+
                 if msg.message == WM_HOTKEY {
                     let id = msg.wParam.0 as i32;
-                    if let Some(name) = hotkey_map.get(&id) {
+                    // Clone the map to avoid holding the lock during emit
+                    let name = {
+                        let state = HOTKEY_STATE.lock().unwrap();
+                        state.as_ref()
+                            .and_then(|s| s.hotkeys.get(&id))
+                            .map(|c| c.id.clone())
+                    };
+                    if let Some(ref name) = name {
                         eprintln!("[Hotkey] Triggered: {}", name);
                         let _ = app.emit("hotkey", name.as_str());
                     }
+                } else if msg.message == WM_USER_REGISTER {
+                    // set_hotkey requested a new registration on this thread
+                    let id = msg.wParam.0 as i32;
+                    let modifiers = HOT_KEY_MODIFIERS(msg.lParam.0 as u32 & 0xFFFF);
+                    let vk = (msg.lParam.0 >> 16) as u32;
+                    let hwnd = HWND(null_mut());
+                    match unsafe { RegisterHotKey(hwnd, id, modifiers, vk) } {
+                        Ok(()) => eprintln!("[Hotkey] Dynamic register OK: id={}", id),
+                        Err(e) => eprintln!("[Hotkey] Dynamic register FAILED: id={} {}", id, e),
+                    }
+                } else if msg.message == WM_USER_UNREGISTER {
+                    // set_hotkey requested an unregister on this thread
+                    let id = msg.wParam.0 as i32;
+                    let hwnd = HWND(null_mut());
+                    let _ = unsafe { UnregisterHotKey(hwnd, id) };
+                    eprintln!("[Hotkey] Dynamic unregister: id={}", id);
                 }
             }
         }
@@ -284,34 +325,39 @@ pub fn set_hotkey(app: AppHandle, id: String, shortcut: String) -> Result<(), St
         .as_mut()
         .ok_or_else(|| "Hotkey state not initialized".to_string())?;
 
-    let hwnd = HWND(null_mut());
-
-    // Find and unregister old hotkey with same id
+    // Find and unregister old hotkey with same config id
     let old_id = state_ref
         .hotkeys
         .iter()
         .find(|(_, config)| config.id == id)
         .map(|(old_id, _)| *old_id);
 
+    // Get the message-loop thread ID to send register/unregister messages
+    let thread_id = *MSG_THREAD_ID.lock().unwrap();
+    if thread_id == 0 {
+        return Err("Hotkey message-loop thread not ready".to_string());
+    }
+
+    // Unregister old hotkey via PostThreadMessage (must run on the msg-loop thread)
     if let Some(old_id) = old_id {
         unsafe {
-            let _ = UnregisterHotKey(hwnd, old_id);
+            let _ = PostThreadMessageW(thread_id, WM_USER_UNREGISTER, WPARAM(old_id as usize), LPARAM(0));
         }
         state_ref.hotkeys.remove(&old_id);
     }
 
-    // Register new hotkey
+    // Register new hotkey via PostThreadMessage
     let new_id = state_ref.next_id;
     state_ref.next_id += 1;
 
+    // Pack modifiers (low 16 bits) and vk (high 16 bits) into lParam
+    let lparam = (modifiers.0 as isize) | ((vk as isize) << 16);
     unsafe {
-        RegisterHotKey(hwnd, new_id, modifiers, vk)
-            .map_err(|e| format!("Failed to register hotkey: {}", e))?;
+        let _ = PostThreadMessageW(thread_id, WM_USER_REGISTER, WPARAM(new_id as usize), LPARAM(lparam));
     }
 
     let name = old_id
-        .and_then(|oid| {
-            // We already removed it, get name from default hotkeys
+        .and_then(|_oid| {
             default_hotkeys()
                 .iter()
                 .find(|c| c.id == id)
