@@ -12,12 +12,12 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    GetWindowLongPtrW, GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, IDC_SIZENESW,
-    IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, LoadCursorW, LWA_ALPHA, MF_STRING, MoveWindow,
-    RegisterClassExW, SetCursor, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, TPM_LEFTBUTTON, TPM_RIGHTBUTTON,
-    TrackPopupMenu, GWL_EXSTYLE, GWLP_USERDATA, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_VISIBLE,
+    DispatchMessageW, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST,
+    IDC_ARROW, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, LoadCursorW, LWA_ALPHA, MF_STRING,
+    MSG, MoveWindow, RegisterClassExW, SetCursor, SetLayeredWindowAttributes, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, TPM_LEFTBUTTON, TPM_RIGHTBUTTON,
+    TrackPopupMenu, TranslateMessage, GWL_EXSTYLE, GWLP_USERDATA, WNDCLASSEXW, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_VISIBLE,
 };
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 
@@ -381,10 +381,84 @@ unsafe extern "system" fn pin_wnd_proc(
 }
 
 /// Helper to read pin.width through a raw pointer
-unsafe fn pin_width(ptr: *const NativePinWindow) -> i32 { (*ptr).width }
-unsafe fn pin_height(ptr: *const NativePinWindow) -> i32 { (*ptr).height }
+unsafe fn pin_width(ptr: *const NativePinWindow) -> i32 {
+    (*ptr).width
+}
+unsafe fn pin_height(ptr: *const NativePinWindow) -> i32 {
+    (*ptr).height
+}
 
 impl NativePinWindow {
+    /// Create a pin window and run its message loop on the calling thread.
+    /// The HWND is sent via `tx` right after ShowWindow, BEFORE the message
+    /// loop begins, so the caller gets the handle without blocking.
+    pub fn create_with_channel(
+        image_rgba: &[u8],
+        width: i32,
+        height: i32,
+        x: i32,
+        y: i32,
+        pin_id: String,
+        app_handle: tauri::AppHandle,
+        tx: std::sync::mpsc::Sender<Result<isize, String>>,
+    ) -> Result<(), String> {
+        unsafe {
+            register_pin_class();
+
+            let bitmap = Self::create_bitmap_from_rgba(image_rgba, width, height)?;
+
+            let class_name = wide(PIN_WINDOW_CLASS);
+            let title = wide("CapPix Pin");
+
+            let hwnd = match CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+                PCWSTR(class_name.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                WS_VISIBLE | WS_OVERLAPPED,
+                x, y, width, height,
+                None, None,
+                windows::Win32::Foundation::HMODULE(std::ptr::null_mut()),
+                None,
+            ) {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = tx.send(Err(format!("CreateWindowExW failed: {}", e)));
+                    return Err(format!("CreateWindowExW failed: {}", e));
+                }
+            };
+
+            let pin = Box::new(NativePinWindow {
+                hwnd,
+                bitmap,
+                width,
+                height,
+                opacity: 255,
+                clickthrough: false,
+                hover_close: false,
+                pin_id: Some(pin_id),
+                app_handle: Some(app_handle),
+            });
+            let pin_ptr = Box::into_raw(pin);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, pin_ptr as isize);
+
+            let _ = ShowWindow(hwnd, SW_SHOW);
+
+            // Send HWND to caller NOW — before entering the blocking message loop
+            let hwnd_val = hwnd.0 as isize;
+            let _ = tx.send(Ok(hwnd_val));
+
+            // Run the message loop on THIS thread for the lifetime of the window
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, hwnd, 0, 0).0 > 0 {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            // Window destroyed — thread will exit
+
+            Ok(())
+        }
+    }
+
     pub fn create(
         image_rgba: &[u8],
         width: i32,
@@ -407,11 +481,16 @@ impl NativePinWindow {
                 PCWSTR(class_name.as_ptr()),
                 PCWSTR(title.as_ptr()),
                 WS_VISIBLE | WS_OVERLAPPED,
-                x, y, width, height,
-                None, None,
+                x,
+                y,
+                width,
+                height,
+                None,
+                None,
                 windows::Win32::Foundation::HMODULE(std::ptr::null_mut()),
                 None,
-            ).map_err(|e| format!("CreateWindowExW failed: {}", e))?;
+            )
+            .map_err(|e| format!("CreateWindowExW failed: {}", e))?;
 
             let pin = Box::new(NativePinWindow {
                 hwnd,

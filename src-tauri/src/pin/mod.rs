@@ -28,7 +28,7 @@ pub struct PinWindow {
 pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String, String> {
     let id = format!("pin-{}", uuid::Uuid::new_v4());
 
-    // Decode base64 image and create a native Win32 pin window (no webview!)
+    // Decode base64 image
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
     let image_data = STANDARD.decode(&image_base64).map_err(|e| e.to_string())?;
@@ -42,22 +42,49 @@ pub fn create_pin_window(app: AppHandle, image_base64: String) -> Result<String,
     let x = (mon_size.width as i32 - width as i32) / 2;
     let y = (mon_size.height as i32 - height as i32) / 2;
 
-    let hwnd = native_window::NativePinWindow::create(
-        rgba.as_raw(),
-        width as i32,
-        height as i32,
-        x,
-        y,
-        id.clone(),
-        app.clone(),
-    )?;
+    // CRITICAL: Create the window on a dedicated thread that runs its own
+    // message loop. Win32 windows must have a GetMessage/DispatchMessage loop
+    // on the SAME thread that created them, otherwise WM_PAINT and other
+    // messages are never processed (window won't render or respond to input).
+    //
+    // We use a channel to get the HWND back; NativePinWindow::create sends
+    // the HWND via the channel right after ShowWindow, BEFORE entering its
+    // message loop. The thread stays alive running the loop until the window
+    // is destroyed.
+    let (tx, rx) = std::sync::mpsc::channel::<Result<isize, String>>();
+    let id_clone = id.clone();
+    let app_clone = app.clone();
+    let rgba_vec = rgba.as_raw().to_vec();
+    std::thread::spawn(move || {
+        let result = native_window::NativePinWindow::create_with_channel(
+            &rgba_vec,
+            width as i32,
+            height as i32,
+            x,
+            y,
+            id_clone,
+            app_clone,
+            tx,
+        );
+        // If create_with_channel returned an error before sending, send it now.
+        if let Err(e) = result {
+            eprintln!("[Pin] create_with_channel error: {}", e);
+        }
+        // Thread stays alive inside create_with_channel's message loop.
+        // When the window is destroyed, the loop exits and the thread ends.
+    });
 
-    log::info!("Native pin window created: {} (HWND {:?})", id, hwnd);
+    let hwnd_result = rx
+        .recv()
+        .map_err(|_| "Pin window channel closed".to_string())?
+        .map_err(|e| e)?;
+
+    eprintln!("[Pin] Native pin window created: {} (HWND {:?})", id, hwnd_result);
 
     // Register HWND in the pin registry
     if let Some(reg) = app.try_state::<PinRegistry>() {
         if let Ok(mut map) = reg.0.lock() {
-            map.insert(id.clone(), hwnd);
+            map.insert(id.clone(), hwnd_result);
         }
     }
 
