@@ -1,30 +1,34 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+use std::sync::OnceLock;
 use tauri::Manager;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, BitBlt, ClientToScreen, CreateCompatibleDC, CreateDIBSection,
-    CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, GetDC, GetStockObject,
-    InvalidateRect, LineTo, MoveToEx, ScreenToClient, SelectObject, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, PAINTSTRUCT, SRCCOPY, WHITE_PEN,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST,
-    IDC_ARROW, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, LoadCursorW, LWA_ALPHA, MF_STRING,
-    MSG, MoveWindow, RegisterClassExW, SetCursor, SetLayeredWindowAttributes, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, TPM_LEFTBUTTON, TPM_RIGHTBUTTON,
-    TrackPopupMenu, TranslateMessage, GWL_EXSTYLE, GWLP_USERDATA, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_VISIBLE,
+    BeginPaint, ClientToScreen, CreateCompatibleDC, CreateDIBSection, CreateSolidBrush, DeleteDC,
+    DeleteObject, EndPaint, FillRect, GetDC, GetStockObject, InvalidateRect, LineTo, MoveToEx,
+    ReleaseDC, ScreenToClient, SelectObject, StretchBlt, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+    DIB_RGB_COLORS, HBITMAP, PAINTSTRUCT, SRCCOPY, WHITE_PEN,
 };
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
+    MoveWindow, PostQuitMessage, RegisterClassExW, SetCursor, SetLayeredWindowAttributes,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, GWLP_USERDATA,
+    GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
+    IDC_SIZEWE, LWA_ALPHA, MF_STRING, MSG, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE, SW_SHOW,
+    TPM_LEFTBUTTON, TPM_RIGHTBUTTON, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_VISIBLE,
+};
 
 /// A native Win32 window that displays a pinned image without any webview.
 pub struct NativePinWindow {
     hwnd: HWND,
     bitmap: HBITMAP,
+    bitmap_width: i32,
+    bitmap_height: i32,
     width: i32,
     height: i32,
     opacity: u8,
@@ -35,45 +39,54 @@ pub struct NativePinWindow {
 }
 
 const CLOSE_BTN_SIZE: i32 = 24;
+const MINIMIZE_BTN_SIZE: i32 = 24;
 const TITLE_BAR_H: i32 = 28;
 const BORDER_SIZE: i32 = 4;
 
 const CMD_CLOSE: usize = 1001;
+const CMD_MINIMIZE: usize = 1008;
 const CMD_OPACITY_INC: usize = 1002;
 const CMD_OPACITY_DEC: usize = 1003;
 const CMD_CLICKTHROUGH: usize = 1004;
 const CMD_TOPMOST: usize = 1007;
+pub(super) const WM_APP_RESIZE_PIN: u32 = 0x8000 + 0x31;
 
 fn wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
-static mut PIN_WINDOW_CLASS_REGISTERED: bool = false;
+static PIN_WINDOW_CLASS_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 const PIN_WINDOW_CLASS: &str = "CapPixPinWindow";
 
-fn register_pin_class() {
-    unsafe {
-        if PIN_WINDOW_CLASS_REGISTERED {
-            return;
-        }
-        let class_name = wide(PIN_WINDOW_CLASS);
-        let wnd_class = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: Default::default(),
-            lpfnWndProc: Some(pin_wnd_proc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: windows::Win32::Foundation::HINSTANCE(std::ptr::null_mut()),
-            hIcon: Default::default(),
-            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hbrBackground: Default::default(),
-            lpszMenuName: PCWSTR::null(),
-            lpszClassName: PCWSTR(class_name.as_ptr()),
-            hIconSm: Default::default(),
-        };
-        let _ = RegisterClassExW(&wnd_class);
-        PIN_WINDOW_CLASS_REGISTERED = true;
-    }
+fn register_pin_class() -> Result<(), String> {
+    PIN_WINDOW_CLASS_INIT
+        .get_or_init(|| unsafe {
+            let class_name = wide(PIN_WINDOW_CLASS);
+            let wnd_class = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                style: Default::default(),
+                lpfnWndProc: Some(pin_wnd_proc),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: windows::Win32::Foundation::HINSTANCE(std::ptr::null_mut()),
+                hIcon: Default::default(),
+                hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+                hbrBackground: Default::default(),
+                lpszMenuName: PCWSTR::null(),
+                lpszClassName: PCWSTR(class_name.as_ptr()),
+                hIconSm: Default::default(),
+            };
+            let atom = RegisterClassExW(&wnd_class);
+            if atom == 0 {
+                Err("RegisterClassExW failed".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .clone()
 }
 
 fn get_xy(lparam: LPARAM) -> (i32, i32) {
@@ -84,6 +97,25 @@ fn get_xy(lparam: LPARAM) -> (i32, i32) {
 
 fn in_close_btn(x: i32, y: i32, window_w: i32) -> bool {
     x >= window_w - CLOSE_BTN_SIZE && y >= 0 && y <= CLOSE_BTN_SIZE
+}
+
+fn in_minimize_btn(x: i32, y: i32, window_w: i32) -> bool {
+    x >= window_w - CLOSE_BTN_SIZE - MINIMIZE_BTN_SIZE
+        && x < window_w - CLOSE_BTN_SIZE
+        && y >= 0
+        && y <= MINIMIZE_BTN_SIZE
+}
+
+unsafe fn actual_client_size(hwnd: HWND, fallback_w: i32, fallback_h: i32) -> (i32, i32) {
+    let mut rect = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rect);
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    if width > 0 && height > 0 {
+        (width, height)
+    } else {
+        (fallback_w.max(1), fallback_h.max(1))
+    }
 }
 
 unsafe extern "system" fn pin_wnd_proc(
@@ -100,34 +132,71 @@ unsafe extern "system" fn pin_wnd_proc(
             let data_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut NativePinWindow;
             if !data_ptr.is_null() {
                 let pin = &*data_ptr;
+                let (render_w, render_h) = actual_client_size(hwnd, pin.width, pin.height);
 
                 let mem_dc = CreateCompatibleDC(hdc);
                 let old_bmp = SelectObject(mem_dc, pin.bitmap);
-                let _ = BitBlt(hdc, 0, 0, pin.width, pin.height, mem_dc, 0, 0, SRCCOPY);
+                let _ = StretchBlt(
+                    hdc,
+                    0,
+                    0,
+                    render_w,
+                    render_h,
+                    mem_dc,
+                    0,
+                    0,
+                    pin.bitmap_width,
+                    pin.bitmap_height,
+                    SRCCOPY,
+                );
                 let _ = SelectObject(mem_dc, old_bmp);
                 let _ = DeleteDC(mem_dc);
 
-                // Close button (top-right, only when hovered)
-                if pin.hover_close {
-                    let btn_x = pin.width - CLOSE_BTN_SIZE;
+                // Always render both window controls. Native pins do not use a
+                // title bar, so these are the only visible close/minimize exits.
+                {
+                    let close_x = render_w - CLOSE_BTN_SIZE;
+                    let min_x = close_x - MINIMIZE_BTN_SIZE;
                     let btn_y = 0;
-                    let rect = RECT {
-                        left: btn_x + 2,
+                    let min_rect = RECT {
+                        left: min_x + 2,
                         top: btn_y + 2,
-                        right: btn_x + CLOSE_BTN_SIZE - 2,
+                        right: min_x + MINIMIZE_BTN_SIZE - 2,
+                        bottom: btn_y + MINIMIZE_BTN_SIZE - 2,
+                    };
+                    let min_brush = CreateSolidBrush(COLORREF(0x555555));
+                    let _ = FillRect(hdc, &min_rect, min_brush);
+                    let _ = DeleteObject(min_brush);
+
+                    let close_rect = RECT {
+                        left: close_x + 2,
+                        top: btn_y + 2,
+                        right: close_x + CLOSE_BTN_SIZE - 2,
                         bottom: btn_y + CLOSE_BTN_SIZE - 2,
                     };
                     let red_brush = CreateSolidBrush(COLORREF(0x4444FF));
-                    FillRect(hdc, &rect, red_brush);
-                    DeleteObject(red_brush);
+                    let _ = FillRect(hdc, &close_rect, red_brush);
+                    let _ = DeleteObject(red_brush);
 
                     let old_pen = SelectObject(hdc, GetStockObject(WHITE_PEN));
                     let inset = 7i32;
-                    MoveToEx(hdc, btn_x + inset, btn_y + inset, None);
-                    let _ = LineTo(hdc, btn_x + CLOSE_BTN_SIZE - inset, btn_y + CLOSE_BTN_SIZE - inset);
-                    MoveToEx(hdc, btn_x + CLOSE_BTN_SIZE - inset, btn_y + inset, None);
-                    let _ = LineTo(hdc, btn_x + inset, btn_y + CLOSE_BTN_SIZE - inset);
-                    SelectObject(hdc, old_pen);
+                    // Minimize glyph.
+                    let _ = MoveToEx(hdc, min_x + inset, btn_y + CLOSE_BTN_SIZE / 2, None);
+                    let _ = LineTo(
+                        hdc,
+                        min_x + MINIMIZE_BTN_SIZE - inset,
+                        btn_y + CLOSE_BTN_SIZE / 2,
+                    );
+                    // Close glyph.
+                    let _ = MoveToEx(hdc, close_x + inset, btn_y + inset, None);
+                    let _ = LineTo(
+                        hdc,
+                        close_x + CLOSE_BTN_SIZE - inset,
+                        btn_y + CLOSE_BTN_SIZE - inset,
+                    );
+                    let _ = MoveToEx(hdc, close_x + CLOSE_BTN_SIZE - inset, btn_y + inset, None);
+                    let _ = LineTo(hdc, close_x + inset, btn_y + CLOSE_BTN_SIZE - inset);
+                    let _ = SelectObject(hdc, old_pen);
                 }
             }
             let _ = EndPaint(hwnd, &ps);
@@ -141,14 +210,15 @@ unsafe extern "system" fn pin_wnd_proc(
             let _ = ScreenToClient(hwnd, &mut pt);
 
             let data_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const NativePinWindow;
-            let (win_w, win_h) = if !data_ptr.is_null() {
+            let (fallback_w, fallback_h) = if !data_ptr.is_null() {
                 (pin_width(data_ptr), pin_height(data_ptr))
             } else {
                 (800, 600)
             };
+            let (win_w, win_h) = actual_client_size(hwnd, fallback_w, fallback_h);
 
-            if in_close_btn(pt.x, pt.y, win_w) {
-                return LRESULT(1); // HTCLIENT
+            if in_close_btn(pt.x, pt.y, win_w) || in_minimize_btn(pt.x, pt.y, win_w) {
+                return LRESULT(1); // HTCLIENT: deliver WM_LBUTTONUP
             }
 
             // Border resize
@@ -213,7 +283,8 @@ unsafe extern "system" fn pin_wnd_proc(
             if !data_ptr.is_null() {
                 let pin = &mut *data_ptr;
                 let was_hover = pin.hover_close;
-                pin.hover_close = in_close_btn(pt.x, pt.y, pin.width);
+                let (win_w, _) = actual_client_size(hwnd, pin.width, pin.height);
+                pin.hover_close = in_close_btn(pt.x, pt.y, win_w);
                 if pin.hover_close != was_hover {
                     let _ = InvalidateRect(hwnd, None, false);
                 }
@@ -228,7 +299,8 @@ unsafe extern "system" fn pin_wnd_proc(
             if !data_ptr.is_null() {
                 let pin = &mut *data_ptr;
                 let was_hover = pin.hover_close;
-                pin.hover_close = in_close_btn(x, y, pin.width);
+                let (win_w, _) = actual_client_size(hwnd, pin.width, pin.height);
+                pin.hover_close = in_close_btn(x, y, win_w);
                 if pin.hover_close != was_hover {
                     let _ = InvalidateRect(hwnd, None, false);
                 }
@@ -240,9 +312,17 @@ unsafe extern "system" fn pin_wnd_proc(
             // WM_LBUTTONUP
             let (x, y) = get_xy(lparam);
             let data_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const NativePinWindow;
-            if !data_ptr.is_null() && in_close_btn(x, y, pin_width(data_ptr)) {
-                let _ = DestroyWindow(hwnd);
-                return LRESULT(0);
+            if !data_ptr.is_null() {
+                let (win_w, _) =
+                    actual_client_size(hwnd, pin_width(data_ptr), pin_height(data_ptr));
+                if in_close_btn(x, y, win_w) {
+                    let _ = DestroyWindow(hwnd);
+                    return LRESULT(0);
+                }
+                if in_minimize_btn(x, y, win_w) {
+                    let _ = ShowWindow(hwnd, SW_MINIMIZE);
+                    return LRESULT(0);
+                }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -257,16 +337,28 @@ unsafe extern "system" fn pin_wnd_proc(
             let pin = &*data_ptr;
 
             let hmenu = CreatePopupMenu().unwrap_or_default();
-            let opa_str = wide(&format!("增加透明度 ({:.0}%)", pin.opacity as f64 / 255.0 * 100.0));
-            let opd_str = wide(&format!("降低透明度 ({:.0}%)", pin.opacity as f64 / 255.0 * 100.0));
-            let ct_str = wide(if pin.clickthrough { "取消鼠标穿透" } else { "鼠标穿透" });
+            let opa_str = wide(&format!(
+                "增加透明度 ({:.0}%)",
+                pin.opacity as f64 / 255.0 * 100.0
+            ));
+            let opd_str = wide(&format!(
+                "降低透明度 ({:.0}%)",
+                pin.opacity as f64 / 255.0 * 100.0
+            ));
+            let ct_str = wide(if pin.clickthrough {
+                "取消鼠标穿透"
+            } else {
+                "鼠标穿透"
+            });
             let topmost_str = wide("取消置顶");
             let close_str = wide("关闭");
+            let min_str = wide("最小化");
 
             AppendMenuW(hmenu, MF_STRING, CMD_OPACITY_INC, PCWSTR(opa_str.as_ptr()));
             AppendMenuW(hmenu, MF_STRING, CMD_OPACITY_DEC, PCWSTR(opd_str.as_ptr()));
             AppendMenuW(hmenu, MF_STRING, CMD_CLICKTHROUGH, PCWSTR(ct_str.as_ptr()));
             AppendMenuW(hmenu, MF_STRING, CMD_TOPMOST, PCWSTR(topmost_str.as_ptr()));
+            AppendMenuW(hmenu, MF_STRING, CMD_MINIMIZE, PCWSTR(min_str.as_ptr()));
             AppendMenuW(hmenu, MF_STRING, CMD_CLOSE, PCWSTR(close_str.as_ptr()));
 
             let mut pt = POINT { x, y };
@@ -275,13 +367,22 @@ unsafe extern "system" fn pin_wnd_proc(
             let cmd = TrackPopupMenu(
                 hmenu,
                 TPM_RIGHTBUTTON | TPM_LEFTBUTTON,
-                pt.x, pt.y, 0, hwnd, None,
+                pt.x,
+                pt.y,
+                0,
+                hwnd,
+                None,
             );
             let _ = DestroyMenu(hmenu);
 
             let cmd_id = cmd.0 as usize;
             match cmd_id {
-                CMD_CLOSE => { let _ = DestroyWindow(hwnd); }
+                CMD_MINIMIZE => {
+                    let _ = ShowWindow(hwnd, SW_MINIMIZE);
+                }
+                CMD_CLOSE => {
+                    let _ = DestroyWindow(hwnd);
+                }
                 CMD_OPACITY_INC => {
                     let pin = &mut *data_ptr;
                     pin.opacity = (pin.opacity as u16).saturating_add(26).min(255) as u8;
@@ -299,7 +400,11 @@ unsafe extern "system" fn pin_wnd_proc(
                     if pin.clickthrough {
                         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT.0 as isize);
                     } else {
-                        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !(WS_EX_TRANSPARENT.0 as isize));
+                        SetWindowLongPtrW(
+                            hwnd,
+                            GWL_EXSTYLE,
+                            style & !(WS_EX_TRANSPARENT.0 as isize),
+                        );
                     }
                 }
                 CMD_TOPMOST => {
@@ -341,6 +446,25 @@ unsafe extern "system" fn pin_wnd_proc(
             LRESULT(0)
         }
 
+        WM_APP_RESIZE_PIN => {
+            // Resize must run on the thread that owns the native window. This
+            // keeps the cached dimensions, bitmap stretch and button hit areas
+            // in sync for every resize source.
+            let new_width = (wparam.0 as i32).max(CLOSE_BTN_SIZE + MINIMIZE_BTN_SIZE + 8);
+            let new_height = (lparam.0 as i32).max(TITLE_BAR_H + 1);
+            let mut rect = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rect);
+            let _ = MoveWindow(hwnd, rect.left, rect.top, new_width, new_height, true);
+            let data_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut NativePinWindow;
+            if !data_ptr.is_null() {
+                let pin = &mut *data_ptr;
+                pin.width = new_width;
+                pin.height = new_height;
+            }
+            let _ = InvalidateRect(hwnd, None, true);
+            LRESULT(0)
+        }
+
         0x0005 => {
             // WM_SIZE
             let data_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut NativePinWindow;
@@ -364,16 +488,28 @@ unsafe extern "system" fn pin_wnd_proc(
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 let pin = Box::from_raw(data_ptr);
                 let _ = DeleteObject(pin.bitmap);
-                // Clean up PinRegistry so stale HWNDs don't linger
+                // Closing a pin is a destructive user action: keep DB and disk
+                // persistence in sync with the native window lifecycle.
                 if let (Some(pid), Some(app)) = (&pin.pin_id, &pin.app_handle) {
                     if let Some(reg) = app.try_state::<super::PinRegistry>() {
                         if let Ok(mut map) = reg.0.lock() {
                             map.remove(pid);
                         }
                     }
-                    log::info!("[Pin] WM_DESTROY: cleaned registry for {}", pid);
+                    if let Some(state) = app.try_state::<crate::commands::history::HistoryState>() {
+                        if let Ok(db) = state.db.lock() {
+                            let _ = db.delete_pin(pid);
+                        }
+                    }
+                    if let Ok(app_data) = app.path().app_data_dir() {
+                        let pin_dir = app_data.join("pins").join(pid);
+                        let _ = std::fs::remove_dir_all(pin_dir);
+                    }
+                    log::info!("[Pin] WM_DESTROY: removed {} and its persisted image", pid);
                 }
             }
+            // This thread owns exactly one pin window. Let its message loop exit.
+            PostQuitMessage(0);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -394,6 +530,8 @@ impl NativePinWindow {
     /// loop begins, so the caller gets the handle without blocking.
     pub fn create_with_channel(
         image_rgba: &[u8],
+        image_width: i32,
+        image_height: i32,
         width: i32,
         height: i32,
         x: i32,
@@ -403,9 +541,9 @@ impl NativePinWindow {
         tx: std::sync::mpsc::Sender<Result<isize, String>>,
     ) -> Result<(), String> {
         unsafe {
-            register_pin_class();
+            register_pin_class()?;
 
-            let bitmap = Self::create_bitmap_from_rgba(image_rgba, width, height)?;
+            let bitmap = Self::create_bitmap_from_rgba(image_rgba, image_width, image_height)?;
 
             let class_name = wide(PIN_WINDOW_CLASS);
             let title = wide("CapPix Pin");
@@ -415,8 +553,12 @@ impl NativePinWindow {
                 PCWSTR(class_name.as_ptr()),
                 PCWSTR(title.as_ptr()),
                 WS_VISIBLE | WS_OVERLAPPED,
-                x, y, width, height,
-                None, None,
+                x,
+                y,
+                width,
+                height,
+                None,
+                None,
                 windows::Win32::Foundation::HMODULE(std::ptr::null_mut()),
                 None,
             ) {
@@ -430,6 +572,8 @@ impl NativePinWindow {
             let pin = Box::new(NativePinWindow {
                 hwnd,
                 bitmap,
+                bitmap_width: image_width,
+                bitmap_height: image_height,
                 width,
                 height,
                 opacity: 255,
@@ -447,68 +591,16 @@ impl NativePinWindow {
             let hwnd_val = hwnd.0 as isize;
             let _ = tx.send(Ok(hwnd_val));
 
-            // Run the message loop on THIS thread for the lifetime of the window
+            // Receive thread messages too, so WM_DESTROY → PostQuitMessage can
+            // terminate this owner thread instead of leaking it after close.
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, hwnd, 0, 0).0 > 0 {
+            while GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0 {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
             // Window destroyed — thread will exit
 
             Ok(())
-        }
-    }
-
-    pub fn create(
-        image_rgba: &[u8],
-        width: i32,
-        height: i32,
-        x: i32,
-        y: i32,
-        pin_id: String,
-        app_handle: tauri::AppHandle,
-    ) -> Result<isize, String> {
-        unsafe {
-            register_pin_class();
-
-            let bitmap = Self::create_bitmap_from_rgba(image_rgba, width, height)?;
-
-            let class_name = wide(PIN_WINDOW_CLASS);
-            let title = wide("CapPix Pin");
-
-            let hwnd = CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-                PCWSTR(class_name.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                WS_VISIBLE | WS_OVERLAPPED,
-                x,
-                y,
-                width,
-                height,
-                None,
-                None,
-                windows::Win32::Foundation::HMODULE(std::ptr::null_mut()),
-                None,
-            )
-            .map_err(|e| format!("CreateWindowExW failed: {}", e))?;
-
-            let pin = Box::new(NativePinWindow {
-                hwnd,
-                bitmap,
-                width,
-                height,
-                opacity: 255,
-                clickthrough: false,
-                hover_close: false,
-                pin_id: Some(pin_id),
-                app_handle: Some(app_handle),
-            });
-            let pin_ptr = Box::into_raw(pin);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, pin_ptr as isize);
-
-            let _ = ShowWindow(hwnd, SW_SHOW);
-
-            Ok(hwnd.0 as isize)
         }
     }
 
@@ -533,13 +625,21 @@ impl NativePinWindow {
         let mut ppv_bits: *mut u8 = std::ptr::null_mut();
         let hdc = unsafe { GetDC(HWND::default()) };
 
-        let hbitmap = unsafe {
+        let hbitmap_result = unsafe {
             CreateDIBSection(
-                hdc, &bmi, DIB_RGB_COLORS,
+                hdc,
+                &bmi,
+                DIB_RGB_COLORS,
                 &mut ppv_bits as *mut _ as *mut _,
-                None, 0,
+                None,
+                0,
             )
-        }.map_err(|e| format!("CreateDIBSection failed: {}", e))?;
+        };
+        // GetDC must be paired on every success/error path.
+        unsafe {
+            ReleaseDC(HWND::default(), hdc);
+        }
+        let hbitmap = hbitmap_result.map_err(|e| format!("CreateDIBSection failed: {}", e))?;
 
         if !ppv_bits.is_null() {
             let pixel_count = (width * height) as usize;
@@ -547,14 +647,49 @@ impl NativePinWindow {
                 unsafe {
                     let src = i * 4;
                     let dst = i * 4;
-                    *ppv_bits.add(dst) = rgba[src + 2];     // B
+                    *ppv_bits.add(dst) = rgba[src + 2]; // B
                     *ppv_bits.add(dst + 1) = rgba[src + 1]; // G
-                    *ppv_bits.add(dst + 2) = rgba[src];     // R
+                    *ppv_bits.add(dst + 2) = rgba[src]; // R
                     *ppv_bits.add(dst + 3) = rgba[src + 3]; // A
                 }
             }
         }
 
         Ok(hbitmap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{in_close_btn, in_minimize_btn, CLOSE_BTN_SIZE, MINIMIZE_BTN_SIZE};
+
+    #[test]
+    fn close_button_occupies_rightmost_strip() {
+        let width = 320;
+        assert!(in_close_btn(width - CLOSE_BTN_SIZE, 0, width));
+        assert!(in_close_btn(width - 1, CLOSE_BTN_SIZE, width));
+        assert!(!in_close_btn(width - CLOSE_BTN_SIZE - 1, 10, width));
+        assert!(!in_close_btn(width - 1, CLOSE_BTN_SIZE + 1, width));
+    }
+
+    #[test]
+    fn minimize_button_sits_immediately_left_of_close() {
+        let width = 320;
+        assert!(in_minimize_btn(
+            width - CLOSE_BTN_SIZE - MINIMIZE_BTN_SIZE,
+            0,
+            width
+        ));
+        assert!(in_minimize_btn(
+            width - CLOSE_BTN_SIZE - 1,
+            MINIMIZE_BTN_SIZE,
+            width
+        ));
+        assert!(!in_minimize_btn(width - CLOSE_BTN_SIZE, 10, width));
+        assert!(!in_minimize_btn(
+            width - CLOSE_BTN_SIZE - MINIMIZE_BTN_SIZE - 1,
+            10,
+            width
+        ));
     }
 }

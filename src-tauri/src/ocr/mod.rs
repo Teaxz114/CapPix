@@ -87,16 +87,29 @@ fn find_ocr_worker(app: &tauri::AppHandle) -> Result<(String, Vec<String>), Stri
 }
 
 #[tauri::command]
-pub async fn ocr_image(app: tauri::AppHandle, image_base64: String, language: Option<String>) -> Result<OcrResult, String> {
-    // Try local OCR worker first (cappix_ocr.exe or Python)
+pub async fn ocr_image(
+    app: tauri::AppHandle,
+    image_base64: String,
+    language: Option<String>,
+    allow_online_fallback: Option<bool>,
+) -> Result<OcrResult, String> {
+    // Try local OCR worker first (cappix_ocr.exe or Python).
     match ocr_image_local(&app, &image_base64, language.as_deref()).await {
         Ok(result) => return Ok(result),
         Err(local_err) => {
-            log::info!("[OCR] Local OCR failed ({}), trying online API fallback", local_err);
+            if !allow_online_fallback.unwrap_or(false) {
+                log::warn!("[OCR] Local OCR failed; online fallback is disabled: {}", local_err);
+                return Err(format!(
+                    "本地 OCR 识别失败：{}。为保护截图隐私，未将截图上传到云端。可在“设置 > OCR”中明确开启“本地失败时允许云端 OCR 回退”后重试。",
+                    local_err
+                ));
+            }
+
+            log::info!("[OCR] Local OCR failed ({}), using user-approved online fallback", local_err);
         }
     }
 
-    // Fallback: online OCR API (ocr.space free tier)
+    // Fallback: online OCR API (ocr.space free tier), explicitly approved by the caller.
     ocr_image_online(&image_base64, language.as_deref()).await
 }
 

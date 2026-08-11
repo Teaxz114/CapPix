@@ -1,7 +1,7 @@
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use std::sync::Mutex;
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 
 /// Pending screenshot data for the overlay window to pick up
 pub struct PendingScreenshot(pub Mutex<Option<String>>);
@@ -10,13 +10,17 @@ pub struct PendingScreenshot(pub Mutex<Option<String>>);
 pub struct PendingAnnotateImage(pub Mutex<Option<String>>);
 
 #[tauri::command]
-pub fn get_pending_screenshot(state: tauri::State<PendingScreenshot>) -> Result<Option<String>, String> {
+pub fn get_pending_screenshot(
+    state: tauri::State<PendingScreenshot>,
+) -> Result<Option<String>, String> {
     let mut data = state.0.lock().map_err(|e| e.to_string())?;
     Ok(data.take())
 }
 
 #[tauri::command]
-pub fn get_pending_annotate_image(state: tauri::State<PendingAnnotateImage>) -> Result<Option<String>, String> {
+pub fn get_pending_annotate_image(
+    state: tauri::State<PendingAnnotateImage>,
+) -> Result<Option<String>, String> {
     let mut data = state.0.lock().map_err(|e| e.to_string())?;
     Ok(data.take())
 }
@@ -40,12 +44,30 @@ pub fn dismiss_screenshot_overlay(
     // Hide immediately: cancel should exit screenshot mode, not show any app page.
     let _ = window.hide();
 
-    // Restore normal window state while hidden so later settings/history opens are normal.
-    let _ = window.set_always_on_top(false);
+    restore_normal_main_window(&window);
+
+    Ok(())
+}
+
+/// Leave the temporary screenshot-overlay state. Keep this in one place so a
+/// completed capture cannot remain borderless, always-on-top, or absent from
+/// the taskbar when it becomes the normal annotation window.
+fn restore_normal_main_window(window: &tauri::WebviewWindow) {
     let _ = window.set_decorations(true);
     let _ = window.set_resizable(true);
-    let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
+    let _ = window.set_skip_taskbar(false);
+    let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
+    // Apply HWND_NOTOPMOST after restoring visible styles. On Windows,
+    // SetWindowPos can be ignored while the HWND is hidden or borderless.
+    let _ = window.set_always_on_top(false);
+}
 
+#[tauri::command]
+pub fn restore_normal_window_state(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+    restore_normal_main_window(&window);
     Ok(())
 }
 
@@ -57,11 +79,13 @@ pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String>
     let (width, height) = rgba.dimensions();
 
     unsafe {
+        use windows::Win32::Foundation::HANDLE;
         use windows::Win32::Graphics::Gdi::*;
         use windows::Win32::System::DataExchange::*;
-        use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+        use windows::Win32::System::Memory::{
+            GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+        };
         use windows::Win32::System::Ole::CF_DIB;
-        use windows::Win32::Foundation::HANDLE;
 
         OpenClipboard(None).map_err(|e| format!("Failed to open clipboard: {}", e))?;
         let _ = EmptyClipboard();
@@ -71,11 +95,10 @@ pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String>
         let pixel_data_size = (width * height * 4) as usize;
         let total_size = bmi_size + pixel_data_size;
 
-        let h_mem = GlobalAlloc(GMEM_MOVEABLE, total_size)
-            .map_err(|e| {
-                let _ = CloseClipboard();
-                format!("GlobalAlloc failed: {}", e)
-            })?;
+        let h_mem = GlobalAlloc(GMEM_MOVEABLE, total_size).map_err(|e| {
+            let _ = CloseClipboard();
+            format!("GlobalAlloc failed: {}", e)
+        })?;
 
         let p_mem = GlobalLock(h_mem);
         if p_mem.is_null() {
@@ -127,10 +150,7 @@ pub fn crop_image(
     let cropped = img.crop_imm(x, y, width, height);
     let mut buf = Vec::new();
     cropped
-        .write_to(
-            &mut std::io::Cursor::new(&mut buf),
-            image::ImageFormat::Png,
-        )
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
     Ok(STANDARD.encode(&buf))
 }
@@ -139,19 +159,24 @@ pub fn crop_image(
 pub fn open_screenshot_overlay(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("open_screenshot_overlay called");
 
-    let window = app.get_webview_window("main")
+    let window = app
+        .get_webview_window("main")
         .ok_or("Main window not found")?;
 
-    let monitor = app
-        .primary_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or("No primary monitor")?;
-    let pos = monitor.position();
-    let size = monitor.size();
+    // The overlay's (0, 0) must match the captured image's (0, 0): the
+    // virtual desktop origin, not the primary monitor origin. This includes
+    // displays placed left of or above the primary display.
+    let virtual_screen = crate::capture::screen::virtual_screen_bounds();
 
-    // Resize and reposition while still hidden (no visual artifacts)
-    let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
-    let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+    // Resize and reposition while still hidden (no visual artifacts).
+    let _ = window.set_size(tauri::PhysicalSize::new(
+        virtual_screen.width as u32,
+        virtual_screen.height as u32,
+    ));
+    let _ = window.set_position(tauri::PhysicalPosition::new(
+        virtual_screen.x,
+        virtual_screen.y,
+    ));
 
     // Remove window chrome (title bar + border) and stay on top for the overlay.
     // Without this the screenshot capture shows the app's own window frame.
@@ -190,7 +215,7 @@ pub async fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), 
 
     match mode.as_str() {
         "capture_region" | "capture_window" => {
-            match crate::capture::screen::capture_screen(0) {
+            match crate::capture::screen::capture_virtual_screen() {
                 Ok(result) => {
                     if let Some(state) = app.try_state::<PendingScreenshot>() {
                         if let Ok(mut data) = state.0.lock() {
@@ -208,19 +233,17 @@ pub async fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), 
                 }
             }
         }
-        "capture_fullscreen" => {
-            match crate::capture::screen::capture_screen(0) {
-                Ok(result) => {
-                    open_annotate_window(app, result.image_base64)?;
-                }
-                Err(e) => {
-                    log::error!("Capture failed: {}", e);
-                    if let Some(win) = app.get_webview_window("main") {
-                        let _ = win.show();
-                    }
+        "capture_fullscreen" => match crate::capture::screen::capture_virtual_screen() {
+            Ok(result) => {
+                open_annotate_window(app, result.image_base64)?;
+            }
+            Err(e) => {
+                log::error!("Capture failed: {}", e);
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
                 }
             }
-        }
+        },
         _ => return Err(format!("Unknown capture mode: {}", mode)),
     }
     Ok(())
@@ -228,7 +251,10 @@ pub async fn trigger_capture(app: tauri::AppHandle, mode: String) -> Result<(), 
 
 #[tauri::command]
 pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Result<(), String> {
-    eprintln!("[open_annotate_window] called, image_base64 length: {}", image_base64.len());
+    eprintln!(
+        "[open_annotate_window] called, image_base64 length: {}",
+        image_base64.len()
+    );
 
     // Close screenshot overlay if it exists (from dedicated window attempt)
     if let Some(overlay) = app.get_webview_window("screenshot-overlay") {
@@ -246,17 +272,17 @@ pub fn open_annotate_window(app: tauri::AppHandle, image_base64: String) -> Resu
     }
 
     // Reuse main window for annotate — restore to normal state
-    let window = app.get_webview_window("main")
+    let window = app
+        .get_webview_window("main")
         .ok_or("Main window not found")?;
-    eprintln!("[open_annotate_window] main window found, current visible: {}", window.is_visible().unwrap_or(false));
+    eprintln!(
+        "[open_annotate_window] main window found, current visible: {}",
+        window.is_visible().unwrap_or(false)
+    );
 
-    let _ = window.set_decorations(true);
-    let _ = window.set_always_on_top(false);
-    let _ = window.set_resizable(true);
-    let _ = window.set_size(tauri::LogicalSize::new(1200.0, 800.0));
-    let _ = window.center();
     let _ = window.show();
-    eprintln!("[open_annotate_window] window restored and shown");
+    restore_normal_main_window(&window);
+    let _ = window.center();
 
     // Navigate via Tauri event (same pattern as open_screenshot_overlay)
     let _ = app.emit("navigate", "annotate");

@@ -1,5 +1,5 @@
-use crate::capture::{self, CaptureResult, ScreenInfo, WindowInfo};
 use crate::capture::window_detect::WindowRegion;
+use crate::capture::{self, CaptureResult, ScreenInfo, WindowInfo};
 
 #[tauri::command]
 pub fn get_screens() -> Result<Vec<ScreenInfo>, String> {
@@ -8,7 +8,7 @@ pub fn get_screens() -> Result<Vec<ScreenInfo>, String> {
 
 #[tauri::command]
 pub fn capture_fullscreen() -> Result<CaptureResult, String> {
-    capture::screen::capture_screen(0).map_err(|e| e.to_string())
+    capture::screen::capture_virtual_screen().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

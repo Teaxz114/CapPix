@@ -8,7 +8,8 @@
       <span class="spinner"></span> 识别中...
     </div>
     <div v-else-if="error" class="ocr-error">
-      {{ error }}
+      <p>{{ error }}</p>
+      <button class="retry-button" @click="retryRecognition" :disabled="!lastImageBase64">重试识别</button>
     </div>
     <div v-else class="ocr-content">
       <div class="ocr-toolbar">
@@ -37,6 +38,10 @@
         <div class="ocr-text">{{ translation.translated }}</div>
         <button class="copy-translation" @click="copyTranslation">复制翻译</button>
       </div>
+      <div v-if="translationError" class="translation-error">
+        <span>{{ translationError }}</span>
+        <button class="retry-button" @click="translate" :disabled="translating">重试翻译</button>
+      </div>
 
       <!-- OCR blocks -->
       <div v-if="result?.blocks?.length" class="ocr-blocks">
@@ -53,6 +58,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { useConfigStore } from "../stores/config";
 
 interface OcrBlock {
   text: string;
@@ -81,6 +87,11 @@ const result = ref<OcrResult | null>(null);
 const translation = ref<TranslateResult | null>(null);
 const translating = ref(false);
 const targetLang = ref("zh");
+const translationError = ref("");
+const lastImageBase64 = ref("");
+const lastAutoTranslate = ref(false);
+let translationRequestId = 0;
+const { config } = useConfigStore();
 
 async function recognize(imageBase64: string, autoTranslate = false) {
   visible.value = true;
@@ -88,8 +99,17 @@ async function recognize(imageBase64: string, autoTranslate = false) {
   error.value = "";
   result.value = null;
   translation.value = null;
+  translationError.value = "";
+  translating.value = false;
+  translationRequestId++;
+  lastImageBase64.value = imageBase64;
+  lastAutoTranslate.value = autoTranslate;
   try {
-    result.value = await invoke<OcrResult>("ocr_image", { imageBase64, language: "chs" });
+    result.value = await invoke<OcrResult>("ocr_image", {
+      imageBase64,
+      language: config.ocrLanguage,
+      allowOnlineFallback: config.allowOnlineOcrFallback,
+    });
     if (result.value?.error) {
       error.value = result.value.error;
     } else if (autoTranslate && result.value?.text) {
@@ -97,32 +117,56 @@ async function recognize(imageBase64: string, autoTranslate = false) {
       await translate();
     }
   } catch (e) {
-    const msg = String(e);
-    if (msg.includes("1MB") || msg.includes("过大")) {
-      error.value = "图片过大（>1MB），在线 OCR 不支持。请缩小截图或安装本地 OCR。";
-    } else if (msg.includes("not found") || msg.includes("worker")) {
-      error.value = "本地 OCR 引擎未安装，在线回退也失败。请安装 cappix_ocr.exe 或 Python + rapidocr。";
-    } else {
-      error.value = msg;
-    }
+    error.value = formatOcrError(e);
   } finally {
     loading.value = false;
   }
 }
 
+async function retryRecognition() {
+  if (lastImageBase64.value) {
+    await recognize(lastImageBase64.value, lastAutoTranslate.value);
+  }
+}
+
 async function translate() {
   if (!result.value?.text) return;
+  const text = result.value.text;
+  const requestId = ++translationRequestId;
   translating.value = true;
+  translation.value = null;
+  translationError.value = "";
   try {
-    translation.value = await invoke<TranslateResult>("ocr_translate", {
-      text: result.value.text,
+    const translated = await invoke<TranslateResult>("ocr_translate", {
+      text,
       targetLang: targetLang.value,
     });
+    if (requestId === translationRequestId && result.value?.text === text) {
+      translation.value = translated;
+    }
   } catch (e) {
-    console.error("Translation failed:", e);
+    if (requestId === translationRequestId) {
+      translationError.value = `翻译失败，请重试。${formatErrorDetail(e)}`;
+    }
   } finally {
-    translating.value = false;
+    if (requestId === translationRequestId) {
+      translating.value = false;
+    }
   }
+}
+
+function formatOcrError(error: unknown) {
+  const message = String(error);
+  if (message.includes("本地 OCR") || message.includes("图片过大")) return message;
+  if (message.includes("not found") || message.includes("worker")) {
+    return "本地 OCR 引擎未安装。为保护截图隐私，截图未上传到云端。请安装 cappix_ocr.exe 或 Python + rapidocr，或在设置中明确开启云端 OCR 回退后重试。";
+  }
+  return `OCR 识别失败，请重试。${formatErrorDetail(error)}`;
+}
+
+function formatErrorDetail(error: unknown) {
+  const message = String(error).trim();
+  return message ? `（${message}）` : "";
 }
 
 function close() {
@@ -221,6 +265,18 @@ defineExpose({ recognize, visible });
   color: #ef4444;
   font-size: 13px;
 }
+.ocr-error p { margin: 0 0 10px; white-space: pre-wrap; }
+.retry-button {
+  background: #374151;
+  border: 1px solid #6b7280;
+  border-radius: 4px;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.retry-button:hover { background: #4b5563; }
+.retry-button:disabled { cursor: not-allowed; opacity: 0.5; }
 .ocr-content {
   display: flex;
   flex-direction: column;
@@ -284,6 +340,15 @@ defineExpose({ recognize, visible });
   margin-top: 6px;
 }
 .copy-translation:hover { background: #2563eb; }
+.translation-error {
+  align-items: center;
+  color: #fca5a5;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px 14px;
+}
 .ocr-blocks {
   padding: 8px 0;
 }

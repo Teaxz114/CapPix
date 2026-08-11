@@ -57,7 +57,6 @@
     <footer class="text-center text-gray-600 text-xs mt-12">
       CapPix v0.1.0 | MIT License
     </footer>
-    <RecordingBar />
 
     <!-- Record Dialog -->
     <div v-if="showRecordDialog" class="dialog-overlay" @click.self="showRecordDialog = false">
@@ -67,7 +66,7 @@
           <label><input type="checkbox" v-model="recordRegion" /> 选择区域（默认全屏）</label>
         </div>
         <div v-if="recordMode === 'video'" class="dialog-field">
-          <label><input type="checkbox" v-model="recordAudio" /> 录制系统声音</label>
+          <label><input type="checkbox" v-model="recordAudio" /> 录制麦克风（FFmpeg DirectShow）</label>
         </div>
         <div v-if="recordMode === 'gif'" class="dialog-field">
           <label>录制时长: {{ gifDuration }}秒</label>
@@ -88,8 +87,7 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import RecordingBar from "../components/RecordingBar.vue";
+import { listen, emit } from "@tauri-apps/api/event";
 
 interface HotkeyInfo {
   id: string;
@@ -167,6 +165,7 @@ async function startRecording() {
   showRecordDialog.value = false;
   try {
     const region = recordRegion.value ? await selectRegion() : null;
+    if (recordRegion.value && !region) return;
     const path = await invoke<string>("start_recording", {
       outputPath: null,
       region,
@@ -187,6 +186,7 @@ async function startGifRecording() {
   showRecordDialog.value = false;
   try {
     const region = recordRegion.value ? await selectRegion() : null;
+    if (recordRegion.value && !region) return;
     const path = await invoke<string>("record_to_gif", {
       outputPath: null,
       region,
@@ -204,21 +204,37 @@ async function startGifRecording() {
 }
 
 async function selectRegion(): Promise<[number, number, number, number] | null> {
-  // Use screenshot overlay to let user select a region
-  // Returns [x, y, w, h] or null if cancelled
-  try {
-    await invoke("trigger_capture", { mode: "capture_region" });
-    const { listen } = await import("@tauri-apps/api/event");
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(null), 60000);
-      listen<{ x: number; y: number; w: number; h: number }>("region-selected", (event) => {
-        clearTimeout(timeout);
-        resolve([event.payload.x, event.payload.y, event.payload.w, event.payload.h]);
+  // Subscribe before switching routes so a very fast selection cannot be lost.
+  return new Promise(async (resolve) => {
+    let settled = false;
+    let unlistenRegion: (() => void) | null = null;
+    let unlistenCancelled: (() => void) | null = null;
+    const finish = (value: [number, number, number, number] | null) => {
+      if (settled) return;
+      settled = true;
+      if (unlistenRegion) unlistenRegion();
+      if (unlistenCancelled) unlistenCancelled();
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const timeout = setTimeout(() => finish(null), 60000);
+
+    try {
+      unlistenRegion = await listen<{ x: number; y: number; w: number; h: number }>("region-selected", (event) => {
+        const { x, y, w, h } = event.payload;
+        finish([x, y, w, h]);
       });
-    });
-  } catch {
-    return null;
-  }
+      unlistenCancelled = await listen("region-selection-cancelled", () => finish(null));
+      await invoke("trigger_capture", { mode: "capture_region" });
+      // trigger_capture navigates the existing WebView asynchronously. Wait
+      // for ScreenshotView to mount before enabling its recording mode.
+      await new Promise((r) => setTimeout(r, 250));
+      await emit("recording-region-requested");
+    } catch (error) {
+      console.error("Region selection failed:", error);
+      finish(null);
+    }
+  });
 }
 
 async function startColorPicker() {

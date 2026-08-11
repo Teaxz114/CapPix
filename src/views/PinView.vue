@@ -5,8 +5,11 @@
     @wheel.prevent="onWheel"
     :style="{ opacity: opacity }"
   >
-    <!-- Close button -->
-    <div class="pin-close" @click.stop="close">×</div>
+    <!-- Window controls stay in the pin container, so they follow its current image/window size. -->
+    <div class="pin-window-controls" @mousedown.stop @click.stop>
+      <button class="pin-minimize" title="最小化" @click.stop="minimize">−</button>
+      <button class="pin-close" title="关闭" @click.stop="close">×</button>
+    </div>
 
     <!-- Resize handle -->
     <div class="pin-resize" @mousedown.stop="startResize"></div>
@@ -198,6 +201,15 @@ async function saveImage() {
   }
 }
 
+// Minimize this pin window without changing its image size or persisted record.
+async function minimize() {
+  try {
+    await getCurrentWindow().minimize();
+  } catch (e) {
+    console.error("Minimize failed:", e);
+  }
+}
+
 // Close this pin window
 async function close() {
   try {
@@ -293,29 +305,49 @@ function startResize(e: MouseEvent) {
   pointer-events: none;
 }
 
-.pin-close {
+.pin-window-controls {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: clamp(2px, 0.5%, 8px);
+  right: clamp(2px, 0.5%, 8px);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 20;
+}
+
+.pin-minimize,
+.pin-close {
   width: 22px;
   height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(239, 68, 68, 0.85);
+  border: 0;
   color: white;
   font-size: 14px;
   font-weight: bold;
-  border-radius: 50%;
+  border-radius: 4px;
   cursor: pointer;
-  z-index: 20;
-  opacity: 0;
-  transition: opacity 0.2s;
   line-height: 1;
+  opacity: 0.92;
+  transition: opacity 0.15s, background 0.15s;
 }
 
-.pin-container:hover .pin-close {
+.pin-minimize {
+  background: rgba(75, 85, 99, 0.92);
+}
+
+.pin-close {
+  background: rgba(239, 68, 68, 0.92);
+}
+
+.pin-minimize:hover,
+.pin-close:hover {
   opacity: 1;
+}
+
+.pin-minimize:hover {
+  background: rgba(55, 65, 81, 1);
 }
 
 .pin-close:hover {

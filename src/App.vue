@@ -1,5 +1,8 @@
 <template>
   <router-view />
+  <!-- Keep recording controls alive while navigating between Home, History,
+       Settings and annotation routes. -->
+  <RecordingBar />
 </template>
 
 <script setup lang="ts">
@@ -7,6 +10,7 @@ import { watch, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { useConfigStore } from "./stores/config";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import RecordingBar from "./components/RecordingBar.vue";
 
 const configStore = useConfigStore();
 const router = useRouter();

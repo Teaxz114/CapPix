@@ -68,20 +68,14 @@ pub fn run() {
                 for pin_record in pins {
                     let image_path = std::path::PathBuf::from(&pin_record.image_path);
                     if image_path.exists() {
-                        if let Ok(image_data) = std::fs::read(&image_path) {
-                            use base64::Engine;
-                            use base64::engine::general_purpose::STANDARD;
-                            let image_base64 = STANDARD.encode(&image_data);
-                            if let Ok(window_id) = crate::pin::create_pin_window_at(
-                                app.handle().clone(),
-                                image_base64,
+                        match crate::pin::restore_pin_window(app.handle().clone(), pin_record.clone()) {
+                            Ok(()) => log::info!(
+                                "Restored pin: {} at ({}, {})",
+                                pin_record.id,
                                 pin_record.x,
                                 pin_record.y,
-                                pin_record.width,
-                                pin_record.height,
-                            ) {
-                                log::info!("Restored pin: {} at ({}, {})", window_id, pin_record.x, pin_record.y);
-                            }
+                            ),
+                            Err(error) => log::warn!("Failed to restore pin {}: {}", pin_record.id, error),
                         }
                     }
                 }
@@ -103,7 +97,7 @@ pub fn run() {
                         eprintln!("[hotkey handler] capture_region: window hidden, waiting 200ms");
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-                        match crate::capture::screen::capture_screen(0) {
+                        match crate::capture::screen::capture_virtual_screen() {
                             Ok(result) => {
                                 eprintln!("[hotkey handler] capture_region: screen captured, storing pending");
                                 // Store screenshot data for overlay to pick up
@@ -137,7 +131,7 @@ pub fn run() {
                         eprintln!("[hotkey handler] capture_fullscreen: window hidden, waiting 200ms");
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-                        match crate::capture::screen::capture_screen(0) {
+                        match crate::capture::screen::capture_virtual_screen() {
                             Ok(result) => {
                                 eprintln!("[hotkey handler] capture_fullscreen: screen captured, opening annotate");
                                 if let Err(e) = commands::clipboard::open_annotate_window(app.clone(), result.image_base64) {
@@ -163,7 +157,7 @@ pub fn run() {
                         eprintln!("[hotkey handler] capture_window: window hidden, waiting 200ms");
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-                        match crate::capture::screen::capture_screen(0) {
+                        match crate::capture::screen::capture_virtual_screen() {
                             Ok(result) => {
                                 eprintln!("[hotkey handler] capture_window: screen captured, storing pending");
                                 // Store screenshot data for overlay to pick up
@@ -209,6 +203,7 @@ pub fn run() {
             commands::clipboard::get_pending_screenshot,
             commands::clipboard::get_pending_annotate_image,
             commands::clipboard::dismiss_screenshot_overlay,
+            commands::clipboard::restore_normal_window_state,
             commands::save::save_image_to_file,
             commands::save::save_image_to_path,
             commands::save::prepare_save_path,

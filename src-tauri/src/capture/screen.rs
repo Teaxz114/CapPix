@@ -1,13 +1,58 @@
 use super::{CaptureResult, ScreenInfo};
 use anyhow::Result;
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use image::RgbaImage;
 use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
+
+/// Physical rectangle of the Windows virtual desktop. Its origin can be negative
+/// when a display is positioned to the left of or above the primary display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtualScreenBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Read the Windows virtual-desktop rectangle in physical screen coordinates.
+pub fn virtual_screen_bounds() -> VirtualScreenBounds {
+    VirtualScreenBounds {
+        x: unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
+        y: unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
+        width: unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
+        height: unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
+    }
+}
+
+/// Pure monitor-union calculation used to validate virtual-desktop coordinate
+/// handling without requiring physical multi-monitor hardware in tests.
+#[cfg(test)]
+fn virtual_screen_bounds_from_screens(screens: &[ScreenInfo]) -> Option<VirtualScreenBounds> {
+    let first = screens.first()?;
+    let mut left = first.x;
+    let mut top = first.y;
+    let mut right = first.x + first.width;
+    let mut bottom = first.y + first.height;
+
+    for screen in &screens[1..] {
+        left = left.min(screen.x);
+        top = top.min(screen.y);
+        right = right.max(screen.x + screen.width);
+        bottom = bottom.max(screen.y + screen.height);
+    }
+
+    Some(VirtualScreenBounds {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
 
 /// Monitor callback context
 struct MonitorEnumCtx {
@@ -74,13 +119,22 @@ pub fn capture_screen(screen_id: u32) -> Result<CaptureResult> {
     capture_rect(screen.x, screen.y, screen.width, screen.height)
 }
 
+/// Capture one image covering the complete virtual desktop, including displays
+/// with negative physical coordinates. Overlay-local image coordinates always
+/// refer to this returned image, never to virtual-desktop coordinates directly.
+pub fn capture_virtual_screen() -> Result<CaptureResult> {
+    let bounds = virtual_screen_bounds();
+    capture_rect(bounds.x, bounds.y, bounds.width, bounds.height)
+}
+
 /// Capture a rectangular region of the virtual screen (coordinates in virtual screen space)
 pub fn capture_rect(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureResult> {
     // Clamp to virtual screen bounds
-    let vx = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let vy = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
-    let vw = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
-    let vh = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+    let virtual_screen = virtual_screen_bounds();
+    let vx = virtual_screen.x;
+    let vy = virtual_screen.y;
+    let vw = virtual_screen.width;
+    let vh = virtual_screen.height;
 
     let x = x.max(vx);
     let y = y.max(vy);
@@ -108,19 +162,17 @@ pub fn capture_rect(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureRe
 
 /// DXGI Desktop Duplication capture (Win8+) — can capture DirectX fullscreen apps
 fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureResult> {
+    use windows::core::Interface;
     use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_UNKNOWN};
     use windows::Win32::Graphics::Direct3D11::{
-        D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, ID3D11Device, ID3D11DeviceContext,
-        D3D11_TEXTURE2D_DESC, D3D11_RESOURCE_MISC_FLAG,
+        ID3D11Device, ID3D11DeviceContext, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG,
+        D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
     };
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
     use windows::Win32::Graphics::Dxgi::{
-        IDXGIOutputDuplication, DXGI_OUTDUPL_FRAME_INFO, DXGI_ERROR_ACCESS_LOST,
-        DXGI_ERROR_WAIT_TIMEOUT,
+        IDXGIOutputDuplication, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_WAIT_TIMEOUT,
+        DXGI_OUTDUPL_FRAME_INFO,
     };
-    use windows::Win32::Graphics::Dxgi::Common::{
-        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
-    };
-    use windows::core::Interface;
 
     unsafe {
         // 1. Create D3D11 device
@@ -147,8 +199,7 @@ fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureR
         let context = context.ok_or_else(|| anyhow::anyhow!("No D3D11 context"))?;
 
         // 2. Get DXGI device → adapter → output
-        let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice =
-            device.cast()?;
+        let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice = device.cast()?;
         let adapter = dxgi_device.GetAdapter()?;
         let output = adapter.EnumOutputs(0)?; // Primary output
 
@@ -193,8 +244,7 @@ fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureR
         }
 
         // 6. Get the surface from the frame resource
-        let surface: windows::Win32::Graphics::Dxgi::IDXGISurface =
-            resource.unwrap().cast()?;
+        let surface: windows::Win32::Graphics::Dxgi::IDXGISurface = resource.unwrap().cast()?;
 
         let desc = surface.GetDesc()?;
         let desktop_width = desc.Width as i32;
@@ -207,16 +257,21 @@ fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureR
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_STAGING,
             BindFlags: 0,
             CPUAccessFlags: windows::Win32::Graphics::Direct3D11::D3D11_CPU_ACCESS_READ.0 as u32,
             MiscFlags: 0,
         };
 
-        let mut staging_texture: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
+        let mut staging_texture: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> =
+            None;
         device.CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))?;
-        let staging = staging_texture.ok_or_else(|| anyhow::anyhow!("Failed to create staging texture"))?;
+        let staging =
+            staging_texture.ok_or_else(|| anyhow::anyhow!("Failed to create staging texture"))?;
 
         // 8. Copy sub-region from desktop surface to staging texture
         // The desktop texture coordinates are relative to the output's monitor
@@ -240,7 +295,10 @@ fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureR
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
             BindFlags: 0,
             CPUAccessFlags: 0,
@@ -249,7 +307,8 @@ fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureR
 
         let mut full_texture: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
         device.CreateTexture2D(&full_desc, None, Some(&mut full_texture))?;
-        let full_tex = full_texture.ok_or_else(|| anyhow::anyhow!("Failed to create full texture"))?;
+        let full_tex =
+            full_texture.ok_or_else(|| anyhow::anyhow!("Failed to create full texture"))?;
 
         // Copy desktop surface → full GPU texture
         context.CopyResource(
@@ -258,14 +317,7 @@ fn capture_rect_dxgi(x: i32, y: i32, width: i32, height: i32) -> Result<CaptureR
         );
 
         // Copy sub-region from full texture → staging (CPU-readable)
-        context.CopySubresourceRegion(
-            &staging,
-            0,
-            0, 0, 0,
-            &full_tex,
-            0,
-            Some(&src_box),
-        );
+        context.CopySubresourceRegion(&staging, 0, 0, 0, 0, &full_tex, 0, Some(&src_box));
 
         // 9. Map staging texture and read pixels
         let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
@@ -433,9 +485,61 @@ fn overlay_cursor(hdc_mem: HDC, capture_x: i32, capture_y: i32, _width: i32, _he
             let local_y = cursor_pos.y - capture_y;
 
             let _ = DrawIconEx(
-                hdc_mem, local_x, local_y, ci.hCursor, 0, 0, 0, None,
+                hdc_mem,
+                local_x,
+                local_y,
+                ci.hCursor,
+                0,
+                0,
+                0,
+                None,
                 DI_NORMAL | DI_COMPAT,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn screen(x: i32, y: i32, width: i32, height: i32) -> ScreenInfo {
+        ScreenInfo {
+            id: 0,
+            x,
+            y,
+            width,
+            height,
+            is_primary: false,
+        }
+    }
+
+    #[test]
+    fn virtual_bounds_preserve_single_display_origin_and_size() {
+        assert_eq!(
+            virtual_screen_bounds_from_screens(&[screen(0, 0, 1920, 1080)]),
+            Some(VirtualScreenBounds {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            })
+        );
+    }
+
+    #[test]
+    fn virtual_bounds_include_displays_left_and_above_primary() {
+        assert_eq!(
+            virtual_screen_bounds_from_screens(&[
+                screen(0, 0, 1920, 1080),
+                screen(-1280, -200, 1280, 1024),
+            ]),
+            Some(VirtualScreenBounds {
+                x: -1280,
+                y: -200,
+                width: 3200,
+                height: 1280,
+            })
+        );
     }
 }

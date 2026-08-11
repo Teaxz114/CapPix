@@ -86,6 +86,15 @@
             <option value="en">英文</option>
           </select>
         </div>
+        <div class="setting-row vertical">
+          <label>
+            <input type="checkbox" v-model="config.allowOnlineOcrFallback" />
+            本地失败时允许云端 OCR 回退
+          </label>
+          <p class="setting-hint privacy-hint">
+            默认关闭。开启后，本地 OCR 失败时截图会上传至 OCR.Space 进行识别；仅在你明确同意时才会上传。翻译功能会在你点击翻译（或使用截图翻译）时将识别出的文字发送至 MyMemory。
+          </p>
+        </div>
         <div class="setting-row">
           <label>马赛克块大小</label>
           <input type="range" v-model.number="config.mosaicBlockSize" min="4" max="30" />

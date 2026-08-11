@@ -10,6 +10,11 @@
     @dblclick="onDoubleClick"
     @keydown="onKeyDown"
   >
+    <!-- The overlay is intentionally borderless/topmost; keep dismissal explicit. -->
+    <div class="overlay-window-controls" @mousedown.stop.prevent @click.stop.prevent>
+      <button class="overlay-window-control minimize" title="退出并最小化" @click.stop.prevent="minimizeCapture">−</button>
+      <button class="overlay-window-control close" title="关闭截图" @click.stop.prevent="cancelCapture">×</button>
+    </div>
     <!-- Screenshot background image -->
     <img
       v-if="screenshotData"
@@ -179,7 +184,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter } from "vue-router";
@@ -240,9 +245,10 @@ let windowDetectTimer: ReturnType<typeof setTimeout> | null = null;
 const WINDOW_DETECT_DEBOUNCE = 150;
 const contextMenu = ref<{ x: number; y: number } | null>(null);
 
-// Virtual screen offset
-let virtualScreenOffsetX = 0;
-let virtualScreenOffsetY = 0;
+// Physical virtual-desktop origin. It is only used for Windows API calls;
+// selection and crop coordinates always remain local to the overlay image.
+let virtualDesktopOriginX = 0;
+let virtualDesktopOriginY = 0;
 
 // Computed selection bounds
 const selectionX = computed(() => Math.min(startX.value, endX.value));
@@ -302,8 +308,8 @@ async function fetchVirtualScreenOffset() {
   try {
     const screens = await invoke<Array<{ id: number; x: number; y: number; width: number; height: number; is_primary: boolean }>>("get_screens");
     if (screens.length > 0) {
-      virtualScreenOffsetX = Math.min(...screens.map(s => s.x));
-      virtualScreenOffsetY = Math.min(...screens.map(s => s.y));
+      virtualDesktopOriginX = Math.min(...screens.map(s => s.x));
+      virtualDesktopOriginY = Math.min(...screens.map(s => s.y));
     }
   } catch (e) {
     console.error("Failed to get screen info:", e);
@@ -314,13 +320,15 @@ function detectWindowAtCursor(clientX: number, clientY: number) {
   if (windowDetectTimer) clearTimeout(windowDetectTimer);
   windowDetectTimer = setTimeout(async () => {
     try {
-      const screenX = clientX + virtualScreenOffsetX;
-      const screenY = clientY + virtualScreenOffsetY;
+      // get_window_at_point expects virtual-desktop physical coordinates.
+      const screenX = clientX + virtualDesktopOriginX;
+      const screenY = clientY + virtualDesktopOriginY;
       const result = await invoke<WindowRegion | null>("get_window_at_point", { x: screenX, y: screenY });
       if (result) {
         windowHighlight.value = {
-          x: result.x - virtualScreenOffsetX,
-          y: result.y - virtualScreenOffsetY,
+          // Convert the physical result back to overlay-local image coordinates.
+          x: result.x - virtualDesktopOriginX,
+          y: result.y - virtualDesktopOriginY,
           width: result.width,
           height: result.height,
           title: result.title,
@@ -336,6 +344,8 @@ function detectWindowAtCursor(clientX: number, clientY: number) {
 }
 
 let unlisten: (() => void) | null = null;
+let unlistenRecordingRegion: (() => void) | null = null;
+const recordingRegionMode = ref(false);
 
 onMounted(async () => {
   // Get pending screenshot data (reliable pull, no timing issues)
@@ -370,6 +380,16 @@ onMounted(async () => {
     console.error("Failed to listen for activate-color-picker:", e);
   }
 
+  // HomeView requests this mode specifically for region recording. It must
+  // not navigate to annotation after the user completes the drag.
+  try {
+    unlistenRecordingRegion = await listen("recording-region-requested", () => {
+      recordingRegionMode.value = true;
+    });
+  } catch (e) {
+    console.error("Failed to listen for recording region mode:", e);
+  }
+
   await fetchVirtualScreenOffset();
 
   // Use document for keyboard events (no need for both document + window)
@@ -392,6 +412,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (unlisten) unlisten();
+  if (unlistenRecordingRegion) unlistenRecordingRegion();
   if (windowDetectTimer) clearTimeout(windowDetectTimer);
   document.removeEventListener("keydown", onKeyDown);
 });
@@ -484,7 +505,7 @@ function onMouseMove(e: MouseEvent) {
   }
 }
 
-function onMouseUp(e: MouseEvent) {
+async function onMouseUp(e: MouseEvent) {
   // End selection drag (move or resize)
   if (activeHandle.value) {
     endSelectionDrag();
@@ -502,12 +523,18 @@ function onMouseUp(e: MouseEvent) {
   // Small click = window capture
   if (w < 5 || h < 5) {
     hasSelection.value = false;
+    if (recordingRegionMode.value) {
+      recordingRegionMode.value = false;
+      await cancelCapture();
+      await emit("region-selection-cancelled");
+      return;
+    }
     if (windowHighlight.value) {
       const win = windowHighlight.value;
       // Capture window region and go to annotate directly
       doCaptureRegion(
-        win.x + virtualScreenOffsetX,
-        win.y + virtualScreenOffsetY,
+        win.x,
+        win.y,
         win.width,
         win.height,
         true // auto-navigate
@@ -517,18 +544,36 @@ function onMouseUp(e: MouseEvent) {
     return;
   }
 
+  // A recording selection returns physical virtual-desktop coordinates to
+  // HomeView instead of opening annotation.
+  if (recordingRegionMode.value) {
+    const scaleX = screenshotImage.value ? screenshotImage.value.naturalWidth / window.innerWidth : 1;
+    const scaleY = screenshotImage.value ? screenshotImage.value.naturalHeight / window.innerHeight : 1;
+    const region = {
+      x: Math.round(virtualDesktopOriginX + selectionX.value * scaleX),
+      y: Math.round(virtualDesktopOriginY + selectionY.value * scaleY),
+      w: Math.round(w * scaleX),
+      h: Math.round(h * scaleY),
+    };
+    recordingRegionMode.value = false;
+    await cancelCapture();
+    await emit("region-selected", region);
+    return;
+  }
+
   // Valid selection — capture the region but DON'T auto-navigate
   // Show action toolbar instead (PixPin style)
   hasSelection.value = true;
   doCaptureRegion(
-    selectionX.value + virtualScreenOffsetX,
-    selectionY.value + virtualScreenOffsetY,
+    selectionX.value,
+    selectionY.value,
     w,
     h,
     false // don't auto-navigate, wait for toolbar action
   );
 }
 
+/** Crop an overlay-local rectangle from the captured virtual-desktop image. */
 async function doCaptureRegion(x: number, y: number, w: number, h: number, autoNavigate: boolean) {
   captureRegionPromise = cropSelectedRegion(x, y, w, h);
   const croppedBase64 = await captureRegionPromise;
@@ -551,7 +596,9 @@ async function cropSelectedRegion(x: number, y: number, w: number, h: number): P
     return null;
   }
   try {
-    // Convert overlay-local logical pixels to screenshot image pixels
+    // Convert overlay-local logical pixels to screenshot image pixels.
+    // Do not add the virtual-desktop origin: image (0, 0) is already the
+    // overlay's (0, 0), including when its physical desktop position is negative.
     // The screenshot image may be larger than the overlay window due to DPI scaling
     const scaleX = screenshotImage.value ? screenshotImage.value.naturalWidth / window.innerWidth : 1;
     const scaleY = screenshotImage.value ? screenshotImage.value.naturalHeight / window.innerHeight : 1;
@@ -639,10 +686,9 @@ async function actionSave() {
   const image = await getCapturedRegionForAction();
   if (!image) return;
   try {
-    // Exit fullscreen overlay mode so save dialog is visible
-    const win = getCurrentWindow();
-    await win.setAlwaysOnTop(false);
-    await win.setDecorations(true);
+    // Leave overlay mode before the native dialog: restores title bar,
+    // minimize/resize controls and taskbar presence as one atomic backend path.
+    await invoke("restore_normal_window_state");
     await invoke("save_image_to_file", { imageBase64: image });
     saveToHistory();
   } catch (e) {
@@ -809,8 +855,8 @@ function endSelectionDrag() {
   const h = selectionH.value;
   if (w >= 5 && h >= 5) {
     doCaptureRegion(
-      selectionX.value + virtualScreenOffsetX,
-      selectionY.value + virtualScreenOffsetY,
+      selectionX.value,
+      selectionY.value,
       w,
       h,
       false
@@ -832,8 +878,8 @@ function captureRegionFromMenu() {
   contextMenu.value = null;
   if (hasSelection.value) {
     doCaptureRegion(
-      selectionX.value + virtualScreenOffsetX,
-      selectionY.value + virtualScreenOffsetY,
+      selectionX.value,
+      selectionY.value,
       selectionW.value,
       selectionH.value,
       true
@@ -841,8 +887,8 @@ function captureRegionFromMenu() {
   } else if (windowHighlight.value) {
     const win = windowHighlight.value;
     doCaptureRegion(
-      win.x + virtualScreenOffsetX,
-      win.y + virtualScreenOffsetY,
+      win.x,
+      win.y,
       win.width,
       win.height,
       true
@@ -937,11 +983,20 @@ async function cancelCapture() {
   capturedBase64 = "";
   showMagnifier.value = false;
   windowHighlight.value = null;
+  const wasRecordingRegion = recordingRegionMode.value;
+  recordingRegionMode.value = false;
   try {
     await dismissOverlay();
+    if (wasRecordingRegion) await emit("region-selection-cancelled");
   } finally {
     isDismissingOverlay = false;
   }
+}
+
+async function minimizeCapture() {
+  // The overlay is temporary; dismissing it hides the capture window and
+  // returns CapPix to its tray state.
+  await cancelCapture();
 }
 
 async function dismissOverlay() {
@@ -981,6 +1036,33 @@ async function dismissOverlay() {
   z-index: 9999;
   user-select: none;
 }
+
+.overlay-window-controls {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 10001;
+  pointer-events: auto;
+}
+
+.overlay-window-control {
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 5px;
+  color: #fff;
+  background: rgba(31, 41, 55, 0.94);
+  font-size: 21px;
+  line-height: 25px;
+  cursor: pointer;
+}
+
+.overlay-window-control:hover { background: #374151; }
+.overlay-window-control.close { background: #b91c1c; border-color: #f87171; }
+.overlay-window-control.close:hover { background: #dc2626; }
 
 .screenshot-bg {
   position: fixed;

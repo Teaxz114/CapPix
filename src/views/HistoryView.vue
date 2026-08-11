@@ -61,9 +61,10 @@ async function loadHistory() {
     entries.value = await invoke<ScreenshotRecord[]>("history_list", { limit: 50, offset: 0 });
     totalCount.value = await invoke<number>("history_count");
     hasMore.value = entries.value.length < totalCount.value;
-    // Load thumbnails on demand (only visible items)
+    thumbnails.value = {};
+    // Load thumbnails on demand (only visible items); backend resolves media by record ID.
     for (const entry of entries.value) {
-      loadThumbnail(entry.id, entry.image_path);
+      loadThumbnail(entry.id);
     }
   } catch (e) { console.error("Failed to load history:", e); }
 }
@@ -76,21 +77,21 @@ async function loadMore() {
     entries.value.push(...more);
     hasMore.value = more.length === 50 && entries.value.length < totalCount.value;
     for (const entry of more) {
-      loadThumbnail(entry.id, entry.image_path);
+      loadThumbnail(entry.id);
     }
   } catch (e) { console.error("Failed to load more:", e); }
   loadingMore.value = false;
 }
 
-async function loadThumbnail(id: number, imagePath: string) {
+async function loadThumbnail(id: number) {
   if (thumbnails.value[id]) return;
   try {
-    const base64 = await invoke<string>("get_screenshot_thumbnail", { imagePath });
+    const base64 = await invoke<string>("get_screenshot_thumbnail", { id });
     thumbnails.value[id] = `data:image/png;base64,${base64}`;
   } catch (_e) {
-    // Fallback to full image if thumbnail not available
+    // Fallback to the full image through the same record-ID-only interface.
     try {
-      const base64 = await invoke<string>("get_screenshot_image", { imagePath });
+      const base64 = await invoke<string>("get_screenshot_image", { id });
       thumbnails.value[id] = `data:image/png;base64,${base64}`;
     } catch (e) { console.error("Failed to load thumbnail:", id, e); }
   }
@@ -121,7 +122,7 @@ async function clearAll() {
 async function openEntry(entry: ScreenshotRecord) {
   // Load image on demand, then open in annotate window
   try {
-    const base64 = await invoke<string>("get_screenshot_image", { imagePath: entry.image_path });
+    const base64 = await invoke<string>("get_screenshot_image", { id: entry.id });
     invoke("open_annotate_window", { imageBase64: base64 });
   } catch (e) { console.error("Failed to open entry:", e); }
 }

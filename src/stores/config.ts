@@ -27,6 +27,8 @@ export interface AppConfig {
   theme: "dark" | "light";
   // OCR
   ocrLanguage: "ch" | "en" | "ch_en";
+  // Privacy: screenshots are sent to OCR.Space only when the user explicitly enables this.
+  allowOnlineOcrFallback: boolean;
 }
 
 const defaultConfig: AppConfig = {
@@ -48,6 +50,7 @@ const defaultConfig: AppConfig = {
   pinOpacity: 1.0,
   theme: "dark",
   ocrLanguage: "ch_en",
+  allowOnlineOcrFallback: false,
 };
 
 export const useConfigStore = defineStore("config", () => {

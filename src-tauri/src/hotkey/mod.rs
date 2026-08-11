@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::ptr::null_mut;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{HWND, WPARAM, LPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetMessageW, PostThreadMessageW, MSG, WM_HOTKEY, WM_USER,
+    GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_USER,
 };
 
 /// Custom WM_USER messages for the hotkey message-loop thread
@@ -104,6 +104,21 @@ fn parse_shortcut(shortcut: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     Some((modifiers, vk))
 }
 
+/// A dynamic replacement is prepared by a Tauri command and completed on the
+/// owner message thread. The reply makes set_hotkey truthful: configuration is
+/// updated only after Windows accepted the new registration.
+struct PendingHotkeyUpdate {
+    old_id: Option<i32>,
+    old_binding: Option<(HOT_KEY_MODIFIERS, u32)>,
+    config: HotkeyConfig,
+    modifiers: HOT_KEY_MODIFIERS,
+    vk: u32,
+    reply: std::sync::mpsc::Sender<Result<(), String>>,
+}
+
+static PENDING_UPDATES: LazyLock<Mutex<HashMap<i32, PendingHotkeyUpdate>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// Default hotkeys
 fn default_hotkeys() -> Vec<HotkeyConfig> {
     vec![
@@ -192,6 +207,11 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     let configs = load_hotkey_configs(app_handle);
 
     let mut state = HOTKEY_STATE.lock().unwrap();
+    // The owner thread is long-lived. Never spawn a second loop when game mode
+    // is toggled or setup runs twice.
+    if state.is_some() {
+        return Ok(());
+    }
     *state = Some(HotkeyState::new());
     let state_ref = state.as_mut().unwrap();
 
@@ -214,7 +234,12 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     // Start message loop thread — RegisterHotKey MUST be called here
     let app = app_handle.clone();
     std::thread::spawn(move || {
-        // Store this thread's ID so set_hotkey can PostThreadMessage to us
+        // Force Windows to create this thread's message queue before publishing
+        // its id. PostThreadMessageW otherwise races and can silently fail.
+        unsafe {
+            let mut bootstrap = MSG::default();
+            let _ = PeekMessageW(&mut bootstrap, HWND(null_mut()), 0, 0, PM_NOREMOVE);
+        }
         let thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
         {
             let mut tid = MSG_THREAD_ID.lock().unwrap();
@@ -261,14 +286,41 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
                         let _ = app.emit("hotkey", name.as_str());
                     }
                 } else if msg.message == WM_USER_REGISTER {
-                    // set_hotkey requested a new registration on this thread
-                    let id = msg.wParam.0 as i32;
-                    let modifiers = HOT_KEY_MODIFIERS(msg.lParam.0 as u32 & 0xFFFF);
-                    let vk = (msg.lParam.0 >> 16) as u32;
-                    let hwnd = HWND(null_mut());
-                    match unsafe { RegisterHotKey(hwnd, id, modifiers, vk) } {
-                        Ok(()) => eprintln!("[Hotkey] Dynamic register OK: id={}", id),
-                        Err(e) => eprintln!("[Hotkey] Dynamic register FAILED: id={} {}", id, e),
+                    let new_id = msg.wParam.0 as i32;
+                    // Dynamic replacements carry a reply channel in the
+                    // process-local pending table; Windows API calls stay on
+                    // this owner thread.
+                    if let Some(update) = PENDING_UPDATES.lock().unwrap().remove(&new_id) {
+                        let hwnd = HWND(null_mut());
+                        if let Some(old_id) = update.old_id {
+                            let _ = UnregisterHotKey(hwnd, old_id);
+                        }
+                        let outcome = match RegisterHotKey(hwnd, new_id, update.modifiers, update.vk) {
+                            Ok(()) => {
+                                let mut state = HOTKEY_STATE.lock().unwrap();
+                                if let Some(state_ref) = state.as_mut() {
+                                    if let Some(old_id) = update.old_id {
+                                        state_ref.hotkeys.remove(&old_id);
+                                    }
+                                    state_ref.hotkeys.insert(new_id, update.config);
+                                }
+                                Ok(())
+                            }
+                            Err(error) => {
+                                // Keep the previous shortcut usable when the
+                                // replacement is occupied or rejected.
+                                if let (Some(old_id), Some((mods, vk))) = (update.old_id, update.old_binding) {
+                                    let _ = RegisterHotKey(hwnd, old_id, mods, vk);
+                                }
+                                Err(format!("快捷键无法注册（可能已被其他程序占用）: {}", error))
+                            }
+                        };
+                        let _ = update.reply.send(outcome);
+                    } else {
+                        // Bulk re-registration used when leaving game mode.
+                        let modifiers = HOT_KEY_MODIFIERS(msg.lParam.0 as u32 & 0xFFFF);
+                        let vk = (msg.lParam.0 >> 16) as u32;
+                        let _ = RegisterHotKey(HWND(null_mut()), new_id, modifiers, vk);
                     }
                 } else if msg.message == WM_USER_UNREGISTER {
                     // set_hotkey requested an unregister on this thread
@@ -284,19 +336,30 @@ pub fn register_hotkeys(app_handle: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Unregister all hotkeys
+/// Unregister all hotkeys on their owner message thread, while keeping the
+/// configuration map so game mode can restore the same bindings.
 pub fn unregister_hotkeys() {
-    let mut state = HOTKEY_STATE.lock().unwrap();
-    if let Some(state_ref) = state.as_mut() {
-        let hwnd = HWND(null_mut());
-        for id in state_ref.hotkeys.keys() {
-            unsafe {
-                let _ = UnregisterHotKey(hwnd, *id);
-            }
+    let ids: Vec<i32> = HOTKEY_STATE.lock().unwrap()
+        .as_ref().map(|s| s.hotkeys.keys().copied().collect()).unwrap_or_default();
+    let thread_id = *MSG_THREAD_ID.lock().unwrap();
+    for id in ids {
+        if thread_id != 0 {
+            unsafe { let _ = PostThreadMessageW(thread_id, WM_USER_UNREGISTER, WPARAM(id as usize), LPARAM(0)); }
         }
-        state_ref.hotkeys.clear();
-        log::info!("[Hotkey] All hotkeys unregistered");
     }
+}
+
+fn reregister_hotkeys() -> Result<(), String> {
+    let bindings: Vec<(i32, HOT_KEY_MODIFIERS, u32)> = HOTKEY_STATE.lock().map_err(|e| e.to_string())?
+        .as_ref().map(|s| s.hotkeys.iter().filter_map(|(id, c)| parse_shortcut(&c.shortcut).map(|(m, vk)| (*id, m, vk))).collect()).unwrap_or_default();
+    let thread_id = *MSG_THREAD_ID.lock().map_err(|e| e.to_string())?;
+    if thread_id == 0 { return Err("Hotkey message-loop thread not ready".into()); }
+    for (id, modifiers, vk) in bindings {
+        let packed = (modifiers.0 as isize) | ((vk as isize) << 16);
+        unsafe { PostThreadMessageW(thread_id, WM_USER_REGISTER, WPARAM(id as usize), LPARAM(packed))
+            .map_err(|e| format!("Failed to restore hotkey: {}", e))?; }
+    }
+    Ok(())
 }
 
 /// Get all hotkey configs
@@ -314,80 +377,57 @@ pub fn get_hotkeys(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
         .collect())
 }
 
-/// Update a hotkey shortcut (unregister old, register new)
+/// Update a hotkey shortcut. The owner message thread performs the atomic
+/// unregister/register attempt and reports its real result before config is saved.
 pub fn set_hotkey(app: AppHandle, id: String, shortcut: String) -> Result<(), String> {
-    // Parse the new shortcut first
     let (modifiers, vk) = parse_shortcut(&shortcut)
         .ok_or_else(|| format!("Cannot parse shortcut: {}", shortcut))?;
 
-    let mut state = HOTKEY_STATE.lock().unwrap();
-    let state_ref = state
-        .as_mut()
-        .ok_or_else(|| "Hotkey state not initialized".to_string())?;
-
-    // Find and unregister old hotkey with same config id
-    let old_id = state_ref
+    let mut state = HOTKEY_STATE.lock().map_err(|e| e.to_string())?;
+    let state_ref = state.as_mut().ok_or_else(|| "Hotkey state not initialized".to_string())?;
+    let (old_id, old_config) = state_ref
         .hotkeys
         .iter()
         .find(|(_, config)| config.id == id)
-        .map(|(old_id, _)| *old_id);
+        .map(|(key, config)| (*key, config.clone()))
+        .ok_or_else(|| format!("Unknown hotkey: {}", id))?;
+    let old_binding = parse_shortcut(&old_config.shortcut);
+    let new_id = state_ref.next_id;
+    state_ref.next_id += 1;
+    let display_name = old_config.name.clone();
+    drop(state);
 
-    // Get the message-loop thread ID to send register/unregister messages
-    let thread_id = *MSG_THREAD_ID.lock().unwrap();
+    let thread_id = *MSG_THREAD_ID.lock().map_err(|e| e.to_string())?;
     if thread_id == 0 {
         return Err("Hotkey message-loop thread not ready".to_string());
     }
-
-    // Unregister old hotkey via PostThreadMessage (must run on the msg-loop thread)
-    if let Some(old_id) = old_id {
-        unsafe {
-            let _ = PostThreadMessageW(thread_id, WM_USER_UNREGISTER, WPARAM(old_id as usize), LPARAM(0));
-        }
-        state_ref.hotkeys.remove(&old_id);
-    }
-
-    // Register new hotkey via PostThreadMessage
-    let new_id = state_ref.next_id;
-    state_ref.next_id += 1;
-
-    // Pack modifiers (low 16 bits) and vk (high 16 bits) into lParam
-    let lparam = (modifiers.0 as isize) | ((vk as isize) << 16);
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+    PENDING_UPDATES.lock().map_err(|e| e.to_string())?.insert(new_id, PendingHotkeyUpdate {
+        old_id: Some(old_id),
+        old_binding,
+        config: HotkeyConfig { id: id.clone(), name: display_name, shortcut: shortcut.clone() },
+        modifiers,
+        vk,
+        reply: reply_tx,
+    });
     unsafe {
-        let _ = PostThreadMessageW(thread_id, WM_USER_REGISTER, WPARAM(new_id as usize), LPARAM(lparam));
+        PostThreadMessageW(thread_id, WM_USER_REGISTER, WPARAM(new_id as usize), LPARAM(0))
+            .map_err(|e| format!("Hotkey owner thread unavailable: {}", e))?;
     }
+    reply_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| "Hotkey owner thread did not respond".to_string())??;
 
-    let name = old_id
-        .and_then(|_oid| {
-            default_hotkeys()
-                .iter()
-                .find(|c| c.id == id)
-                .map(|c| c.name.clone())
-        })
-        .unwrap_or_else(|| id.clone());
-
-    state_ref.hotkeys.insert(
-        new_id,
-        HotkeyConfig {
-            id: id.clone(),
-            name: name.clone(),
-            shortcut: shortcut.clone(),
-        },
-    );
-
-    log::info!("[Hotkey] Updated: {} = {} (old_id={:?}, new_id={})", id, shortcut, old_id, new_id);
-
-    // Save to config
-    let configs: Vec<HotkeyConfig> = state_ref.hotkeys.values().cloned().collect();
-    drop(state); // Release lock before I/O
+    let state = HOTKEY_STATE.lock().map_err(|e| e.to_string())?;
+    let configs: Vec<HotkeyConfig> = state.as_ref().unwrap().hotkeys.values().cloned().collect();
+    drop(state);
     save_hotkey_configs(&app, &configs)
-        .map_err(|e| format!("Failed to save hotkey config: {}", e))?;
-
-    Ok(())
+        .map_err(|e| format!("Failed to save hotkey config: {}", e))
 }
 
 /// Toggle game mode — when enabled, all global hotkeys are unregistered
 /// to avoid conflicts with game keybindings
-pub fn toggle_game_mode(app: AppHandle, enabled: bool) -> Result<bool, String> {
+pub fn toggle_game_mode(_app: AppHandle, enabled: bool) -> Result<bool, String> {
     let mut game_mode = GAME_MODE.lock().map_err(|e| e.to_string())?;
     let was_enabled = *game_mode;
     *game_mode = enabled;
@@ -397,8 +437,8 @@ pub fn toggle_game_mode(app: AppHandle, enabled: bool) -> Result<bool, String> {
         unregister_hotkeys();
         log::info!("[Hotkey] Game mode ON — all hotkeys disabled");
     } else if !enabled && was_enabled {
-        // Leaving game mode — re-register hotkeys
-        register_hotkeys(&app).map_err(|e| e.to_string())?;
+        // Leaving game mode — restore on the original owner thread, never spawn another loop.
+        reregister_hotkeys()?;
         log::info!("[Hotkey] Game mode OFF — hotkeys restored");
     }
 

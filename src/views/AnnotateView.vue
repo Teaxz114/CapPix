@@ -1,5 +1,10 @@
 <template>
   <div class="annotate-view">
+    <!-- Fallback controls for a stale borderless overlay window. -->
+    <div class="window-controls" @mousedown.stop @click.stop>
+      <button class="window-control minimize" title="最小化" @click.stop="minimizeAnnotate">−</button>
+      <button class="window-control close" title="关闭截图窗口" @click.stop="closeAnnotate">×</button>
+    </div>
     <Toolbar
       :current-tool="currentTool"
       :current-color="currentColor"
@@ -89,6 +94,10 @@ let unlisten: UnlistenFn | null = null;
 
 onMounted(async () => {
   console.log("[AnnotateView] onMounted called");
+  // The previous route is a borderless/topmost overlay. Re-apply normal
+  // window state after navigation as WebView2 may finish mounting later.
+  void normalizeAnnotateWindow();
+  setTimeout(() => void normalizeAnnotateWindow(), 120);
   // Try to get image data from PendingAnnotateImage (set by Rust before window creation)
   try {
     const data = await invoke<string | null>("get_pending_annotate_image");
@@ -803,6 +812,36 @@ function exportCanvasBase64(): string {
 }
 
 // Save/Copy/Pin actions
+async function normalizeAnnotateWindow() {
+  try {
+    await invoke("restore_normal_window_state");
+    const win = getCurrentWindow();
+    await win.setDecorations(true);
+    await win.setResizable(true);
+    await win.setAlwaysOnTop(false);
+  } catch (e) {
+    console.error("Failed to normalize annotate window:", e);
+  }
+}
+
+async function minimizeAnnotate() {
+  try {
+    await normalizeAnnotateWindow();
+    await getCurrentWindow().minimize();
+  } catch (e) {
+    console.error("Failed to minimize annotate window:", e);
+  }
+}
+
+async function closeAnnotate() {
+  try {
+    await normalizeAnnotateWindow();
+    await getCurrentWindow().close();
+  } catch (e) {
+    console.error("Failed to close annotate window:", e);
+  }
+}
+
 async function saveToFile() {
   if (!fabricCanvas) return;
   setStatus("正在保存...");
@@ -896,10 +935,8 @@ function setStatus(msg: string) {
 
 async function restoreMainWindow() {
   try {
+    await normalizeAnnotateWindow();
     const win = getCurrentWindow();
-    await win.setDecorations(true);
-    await win.setAlwaysOnTop(false);
-    await win.setResizable(true);
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     await win.setSize(new LogicalSize(800, 600));
     await win.center();
@@ -920,6 +957,33 @@ async function restoreMainWindow() {
   overflow: hidden;
   position: relative;
 }
+
+.window-controls {
+  position: fixed;
+  top: 8px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 1000;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 5px;
+  color: #f9fafb;
+  background: rgba(31, 41, 55, 0.94);
+  font-size: 20px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.window-control:hover { background: #374151; }
+.window-control.close { background: #b91c1c; border-color: #ef4444; }
+.window-control.close:hover { background: #dc2626; }
 
 .status-bar {
   position: fixed;
